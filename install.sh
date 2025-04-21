@@ -106,11 +106,22 @@ log "Detecting installable disks …"
 mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE -P | grep -E 'NAME="/dev/(sd|nvme|vd)')
 [[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
 
-echo "Select target disk:"
-select d in "${DISKS[@]}"; do
-  [[ -n $d ]] && DISK="${d%% *}" && break
+echo "Available disks:"
+for i in "${!DISKS[@]}"; do
+  echo "$((i+1)). ${DISKS[$i]}"
 done
-log "Selected disk: $DISK"
+
+while true; do
+  read -rp "Enter disk number: " choice
+  if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
+    DISK="${DISKS[$((choice-1))]}"
+    DISK="${DISK%% *}"
+    echo "Selected disk: $DISK"
+    break
+  else
+    echo "Invalid selection. Please enter a number between 1 and ${#DISKS[@]}."
+  fi
+done
 
 [[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
 
