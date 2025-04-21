@@ -114,8 +114,8 @@ done
 while true; do
   read -rp "Enter disk number: " choice
   if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
-    DISK="${DISKS[$((choice-1))]}"
-    DISK="${DISK%% *}"
+    disk_line="${DISKS[$((choice-1))]}"
+    DISK=$(echo "$disk_line" | grep -o 'NAME="[^"]*"' | cut -d'"' -f2)
     echo "Selected disk: $DISK"
     break
   else
@@ -176,36 +176,15 @@ select_locale() {
 }
 
 select_timezone() {
-  local regions=("Africa" "America" "Antarctica" "Asia" "Atlantic" "Australia" "Europe" "Indian" "Pacific")
-  echo "Select your timezone region:"
-  PS3="Region #: "
-  select region in "${regions[@]}" "Other (manual entry)"; do
-    if [[ -n $region && $region != "Other (manual entry)" ]]; then
-      # Show cities for the selected region
-      local cities=($(find /usr/share/zoneinfo/$region -type f -printf "%f\n" | sort))
-      echo "Select city for $region:"
-      PS3="City #: "
-      select city in "${cities[@]}" "Back to regions" "Other (manual entry)"; do
-        if [[ -n $city && $city != "Back to regions" && $city != "Other (manual entry)" ]]; then
-          TZ="$region/$city"
-          log "Selected timezone: $TZ"
-          break 2
-        elif [[ $city == "Back to regions" ]]; then
-          break
-        elif [[ $city == "Other (manual entry)" ]]; then
-          ask TZ "Enter your timezone (e.g. Europe/London)" ""
-          break 2
-        else
-          echo "Invalid selection. Please try again."
-        fi
-      done
-    elif [[ $region == "Other (manual entry)" ]]; then
-      ask TZ "Enter your timezone (e.g. Europe/London)" ""
-      break
-    else
-      echo "Invalid selection. Please try again."
-    fi
-  done
+  echo "Enter your timezone (e.g. America/New_York, Europe/London):"
+  read -rp "Timezone: " TZ
+  
+  if [[ -z "$TZ" ]]; then
+    # Default to UTC if nothing entered
+    TZ="UTC"
+  fi
+  
+  log "Selected timezone: $TZ"
 }
 
 ########################  gather generic answers  #####################
