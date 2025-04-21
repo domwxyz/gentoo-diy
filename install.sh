@@ -48,6 +48,8 @@ ask_pw() {
 ########################  required tools  #############################
 for bin in curl wget sgdisk lsblk lspci lscpu awk openssl; do need "$bin"; done
 
+exec < /dev/tty
+
 ########################  sync clock  #################################
 log "Synchronising clock …"
 (ntpd -q -g || chronyd -q) &>/dev/null || warn "NTP sync failed (continuing)"
