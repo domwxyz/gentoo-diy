@@ -2,7 +2,7 @@
 # =====================================================================
 #  Gentoo “one‑curl” installer
 #  Built for business class Intel/AMD64 laptops.
-#  • Desktop: XFCE/LightDM  or  LXQt/LXDM
+#  • Desktop: XFCE/LightDM  |  LXQt/LXDM |  Headless
 #  • Kernel : genkernel  |  manual‑interactive  |  unattended‑manual
 #  • UEFI *or* legacy BIOS automatically detected
 #  • Auto‑detect: disks, CPU vendor (microcode), GPU (VIDEO_CARDS)
@@ -28,6 +28,21 @@ ask() {                         # ask VAR "Prompt" "default"
   local var="$1" msg="$2" def="${3-}" val
   read -rp "${msg}${def:+ [${def}]}: " val
   printf -v "$var" '%s' "${val:-$def}"
+}
+ask_pw() {
+  local var="$1" msg="$2" val confirm
+  while true; do
+    read -rsp "${msg}: " val
+    echo
+    read -rsp "Confirm ${msg}: " confirm
+    echo
+    if [[ "$val" == "$confirm" ]]; then
+      printf -v "$var" '%s' "$val"
+      break
+    else
+      echo "Passwords don't match. Please try again."
+    fi
+  done
 }
 
 ########################  required tools  #############################
@@ -99,11 +114,96 @@ log "Selected disk: $DISK"
 
 [[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
 
+########################  locale/timezone selection  ###########################
+select_locale() {
+  local locales=(
+    "en_US.UTF-8"    "English (US)"
+    "en_GB.UTF-8"    "English (UK)"
+    "de_DE.UTF-8"    "German"
+    "fr_FR.UTF-8"    "French"
+    "es_ES.UTF-8"    "Spanish"
+    "it_IT.UTF-8"    "Italian"
+    "pt_BR.UTF-8"    "Portuguese (Brazil)"
+    "ru_RU.UTF-8"    "Russian"
+    "ja_JP.UTF-8"    "Japanese"
+    "zh_CN.UTF-8"    "Chinese (Simplified)"
+    "pl_PL.UTF-8"    "Polish"
+    "nl_NL.UTF-8"    "Dutch"
+    "sv_SE.UTF-8"    "Swedish"
+    "ko_KR.UTF-8"    "Korean"
+    "fi_FI.UTF-8"    "Finnish"
+    "no_NO.UTF-8"    "Norwegian"
+    "da_DK.UTF-8"    "Danish"
+    "cs_CZ.UTF-8"    "Czech"
+    "hu_HU.UTF-8"    "Hungarian"
+    "tr_TR.UTF-8"    "Turkish"
+  )
+
+  echo "Select your preferred locale:"
+  PS3="Locale #: "
+  
+  # Create a temporary array with just the descriptions
+  local descriptions=()
+  for ((i=1; i<${#locales[@]}; i+=2)); do
+    descriptions+=("${locales[i]}")
+  done
+  
+  select choice in "${descriptions[@]}" "Other (manual entry)"; do
+    if [[ $REPLY -gt 0 && $REPLY -le ${#descriptions[@]} ]]; then
+      # Convert reply to array index (accounting for 0-based indexing and pairs)
+      local idx=$(( (REPLY-1) * 2 ))
+      LOCALE="${locales[idx]}"
+      log "Selected locale: $LOCALE"
+      break
+    elif [[ "$choice" == "Other (manual entry)" ]]; then
+      ask LOCALE "Enter your locale (e.g. en_US.UTF-8)" "en_US.UTF-8"
+      break
+    else
+      echo "Invalid selection. Please try again."
+    fi
+  done
+}
+
+select_timezone() {
+  local regions=("Africa" "America" "Antarctica" "Asia" "Atlantic" "Australia" "Europe" "Indian" "Pacific")
+  echo "Select your timezone region:"
+  PS3="Region #: "
+  select region in "${regions[@]}" "Other (manual entry)"; do
+    if [[ -n $region && $region != "Other (manual entry)" ]]; then
+      # Show cities for the selected region
+      local cities=($(find /usr/share/zoneinfo/$region -type f -printf "%f\n" | sort))
+      echo "Select city for $region:"
+      PS3="City #: "
+      select city in "${cities[@]}" "Back to regions" "Other (manual entry)"; do
+        if [[ -n $city && $city != "Back to regions" && $city != "Other (manual entry)" ]]; then
+          TZ="$region/$city"
+          log "Selected timezone: $TZ"
+          break 2
+        elif [[ $city == "Back to regions" ]]; then
+          break
+        elif [[ $city == "Other (manual entry)" ]]; then
+          ask TZ "Enter your timezone (e.g. Europe/London)" ""
+          break 2
+        else
+          echo "Invalid selection. Please try again."
+        fi
+      done
+    elif [[ $region == "Other (manual entry)" ]]; then
+      ask TZ "Enter your timezone (e.g. Europe/London)" ""
+      break
+    else
+      echo "Invalid selection. Please try again."
+    fi
+  done
+}
+
 ########################  gather generic answers  #####################
 ask HOSTNAME "Hostname"                 "gentoobox"
-ask TZ       "Timezone (e.g. America/Chicago)" ""
-ask LOCALE   "Primary locale"           "en_US.UTF-8"
+ask_pw ROOT_PASS "Root password"
+select_timezone
+select_locale
 ask USERNAME "Regular user name"        "user"
+ask_pw USER_PASS "Password for $USERNAME"
 
 ########################  swap size (GiB)  ############################
 RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
@@ -127,11 +227,17 @@ case "$GPU_LINE" in
   *NVIDIA*) VC="nouveau" ;;
   *) VC="" ;;
 esac
+
+if [[ $DESKTOP == 3 ]]; then
+  VC=""
+  log "Headless server selected - VIDEO_CARDS set to empty"
+fi
+
 ask VC "Detected GPU ($GPU_LINE). VIDEO_CARDS string" "$VC"
 
 ########################  kernel / desktop choices  ###################
 ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
-ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM" "1"
+ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
 
 ########################  filesystem choice  ##########################
 ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"
@@ -214,6 +320,7 @@ ROOTPW_PLACEHOLDER="ROOTPW"
 USERPW_PLACEHOLDER="USERPW"
 MICROCODE_PLACEHOLDER="MCPKG"
 VIDEO_PLACEHOLDER="VIDEOSTR"
+DISK_PLACEHOLDER="DISKVAL"
 KERNEL_PLACEHOLDER="KVAL"
 DESKTOP_PLACEHOLDER="DVAL"
 GRUBTARGET_PLACEHOLDER="GRUBTGT"
@@ -279,6 +386,10 @@ case "${DESKTOP_PLACEHOLDER}" in
     emerge --quiet xorg-server lxqt-meta lxqt-session \
       lxdm pipewire wireplumber firefox
     rc-update add lxdm default ;;
+  headless)
+    echo "▶ Headless server selected - skipping desktop environment"
+    emerge --quiet net-misc/openssh
+    rc-update add sshd default ;;
 esac
 
 ### network ###
@@ -303,7 +414,7 @@ emerge --quiet grub efibootmgr
 if [[ "${GRUBTARGET_PLACEHOLDER}" == x86_64-efi ]]; then
   grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
 else
-  grub-install --target=i386-pc ${DISK}
+  grub-install --target=i386-pc ${DISK_PLACEHOLDER}
 fi
 grub-mkconfig  -o /boot/grub/grub.cfg
 
@@ -323,11 +434,17 @@ sed -i "s|VIDEOSTR|$VC|"                    "$fh"
 sed -i "s|ESP_UUID|$ESP_UUID|"              "$fh"
 sed -i "s|SWP_UUID|$SWP_UUID|"              "$fh"
 sed -i "s|MCPKG|$MCPKG|"                    "$fh"
+sed -i "s|DISKVAL|$DISK|" "$fh"
 case $KMETHOD in
   1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
 esac
 sed -i "s|KVAL|$kval|"                      "$fh"
-[[ $DESKTOP == 1 ]] && dval="xfce" || dval="lxqt"
+case $DESKTOP in
+  1) dval="xfce" ;;
+  2) dval="lxqt" ;;
+  3) dval="headless" ;;
+  *) dval="headless" ;; # Default fallback
+esac
 sed -i "s|DVAL|$dval|"                      "$fh"
 [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
 sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
