@@ -231,6 +231,8 @@ esac
 ask MCPKG "Detected $CPU_VENDOR CPU. Microcode pkg" "$MCPKG"
 
 ########################  detect GPU / VIDEO_CARDS ####################
+ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
+
 GPU_LINE=$(lspci -nnk | grep -Ei 'VGA|3D')
 case "$GPU_LINE" in
   *Intel*)  VC="intel i965 iris" ;;
@@ -246,9 +248,8 @@ fi
 
 ask VC "Detected GPU ($GPU_LINE). VIDEO_CARDS string" "$VC"
 
-########################  kernel / desktop choices  ###################
+########################  kernel choices  ###################
 ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
-ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
 
 ########################  filesystem choice  ##########################
 ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"

@@ -15,6 +15,12 @@ A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems. **This is n
 
 ```bash
 curl -L https://gentoo.guru/install.sh | bash
+
+or 
+
+curl -L https://gentoo.guru/install.sh -o install.sh
+chmod +x install.sh
+./install.sh
 ```
 
 ## Installation Steps
