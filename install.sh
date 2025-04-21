@@ -257,11 +257,41 @@ else
   parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
   parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
 fi
+
+log "Ensuring partitions are recognized..."
 partprobe "$DISK"
+sleep 3
+
+# Double-check the partitions exist
+if [[ $UEFI == yes ]]; then
+  if [[ ! -e "${DISK}${P}3" ]]; then
+    log "Waiting for partitions to become available..."
+    for i in {1..10}; do
+      sleep 1
+      [[ -e "${DISK}${P}3" ]] && break
+      [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
+    done
+  fi
+else
+  if [[ ! -e "${DISK}${P}2" ]]; then
+    log "Waiting for partitions to become available..."
+    for i in {1..10}; do
+      sleep 1
+      [[ -e "${DISK}${P}2" ]] && break
+      [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
+    done
+  fi
+fi
 
 ESP="${DISK}${P}1"
 SWP="${DISK}${P}2"
 ROOT="${DISK}${P}3"
+
+# For MBR partitioning where partitions start at 1 instead of 0
+if [[ $UEFI != yes ]]; then
+  SWP="${DISK}${P}1"
+  ROOT="${DISK}${P}2"
+fi
 
 [[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
 
