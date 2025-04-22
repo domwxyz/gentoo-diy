@@ -367,6 +367,11 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 ### base config ###
 
+mkdir -p /var/db/repos/gentoo
+emerge-webrsync
+
+eselect profile set default/linux/amd64
+
 echo "${TZ_PLACEHOLDER}" > /etc/timezone
 emerge --config sys-libs/timezone-data --quiet
 
