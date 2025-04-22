@@ -388,7 +388,7 @@ emerge --config sys-libs/timezone-data --quiet
 
 echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
 locale-gen
-eselect locale set ${LOCALE_PLACEHOLDER}.utf8
+eselect locale set ${LOCALE_PLACEHOLDER}
 env-update && source /etc/profile
 
 echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
