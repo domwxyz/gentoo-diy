@@ -422,6 +422,10 @@ case "${KERNEL_PLACEHOLDER}" in
       echo "   Compile & install your kernel before rebooting." ;;
 esac
 
+echo "ACCEPT_LICENSE=\"* -@EULA linux-fw-redistributable\"" >> /etc/portage/make.conf
+mkdir -p /etc/portage/package.accept_keywords
+echo "sys-kernel/linux-firmware ~amd64" >> /etc/portage/package.accept_keywords/firmware
+
 ### firmware ###
 [[ -n "${MICROCODE_PLACEHOLDER}" ]] && emerge --quiet "${MICROCODE_PLACEHOLDER}"
 [[ -n "$(grep -E 'AMD|Intel' /proc/cpuinfo | head -1)" ]] && emerge --quiet sys-kernel/linux-firmware
