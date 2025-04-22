@@ -494,7 +494,7 @@ unset ROOT_PASS USER_PASS
 
 ########################  chroot  #####################################
 log "Entering chroot …"
-chroot /mnt/gentoo /root/inside.sh
+chroot /mnt/gentoo /bin/bash /root/inside.sh
 
 ########################  cleanup  ####################################
 log "Cleaning up …"
