@@ -347,22 +347,22 @@ set -euo pipefail
 source /etc/profile
 
 # -------- placeholders filled by outer script --------
-TZ_PLACEHOLDER="TZVAL"
-LOCALE_PLACEHOLDER="LOCALEVAL"
-HOST_PLACEHOLDER="HOSTVAL"
-USER_PLACEHOLDER="USERVAL"
+TZ_PLACEHOLDER="@@TZVAL@@"
+LOCALE_PLACEHOLDER="@@LOCALEVAL@@"
+HOST_PLACEHOLDER="@@HOSTVAL@@"
+USER_PLACEHOLDER="@@USERVAL@@"
 ROOT_HASH=$(cat /root/root_hash.txt)
 USER_HASH=$(cat /root/user_hash.txt)
-MICROCODE_PLACEHOLDER="MCPKG"
-VIDEO_PLACEHOLDER="VIDEOSTR"
-DISK_PLACEHOLDER="DISKVAL"
-KERNEL_PLACEHOLDER="KVAL"
-DESKTOP_PLACEHOLDER="DVAL"
-GRUBTARGET_PLACEHOLDER="GRUBTGT"
-FSTYPE_PLACEHOLDER="FSTYPE"
-ESP_UUID_PLACEHOLDER="ESP_UUID"
-SWP_UUID_PLACEHOLDER="SWP_UUID"
-MAKEOPTS_PLACEHOLDER="MAKEOPTS"
+MICROCODE_PLACEHOLDER="@@MCPKG@@"
+VIDEO_PLACEHOLDER="@@VIDEOSTR@@"
+DISK_PLACEHOLDER="@@DISKVAL@@"
+KERNEL_PLACEHOLDER="@@KVAL@@"
+DESKTOP_PLACEHOLDER="@@DVAL@@"
+GRUBTARGET_PLACEHOLDER="@@GRUBTGT@@"
+FSTYPE_PLACEHOLDER="@@FSTYPE@@"
+ESP_UUID_PLACEHOLDER="@@ESP_UUID@@"
+SWP_UUID_PLACEHOLDER="@@SWP_UUID@@"
+MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 # -----------------------------------------------------
 
 ### base config ###
@@ -461,31 +461,31 @@ chmod +x /mnt/gentoo/root/inside.sh
 
 ########################  substitute vars  ############################
 fh=/mnt/gentoo/root/inside.sh
-sed -i "s|TZVAL|$TZ|"                       "$fh"
-sed -i "s|LOCALEVAL|$LOCALE|"               "$fh"
-sed -i "s|HOSTVAL|$HOSTNAME|"               "$fh"
-sed -i "s|USERVAL|$USERNAME|"               "$fh"
-sed -i "s|VIDEOSTR|$VC|"                    "$fh"
-sed -i "s|ESP_UUID|$ESP_UUID|"              "$fh"
-sed -i "s|SWP_UUID|$SWP_UUID|"              "$fh"
-sed -i "s|MCPKG|$MCPKG|"                    "$fh"
-sed -i "s|DISKVAL|$DISK|" "$fh"
+sed -i "s|@@TZVAL@@|$TZ|" "$fh"
+sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$fh"
+sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$fh"
+sed -i "s|@@USERVAL@@|$USERNAME|" "$fh"
+sed -i "s|@@VIDEOSTR@@|$VC|" "$fh"
+sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$fh"
+sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$fh"
+sed -i "s|@@MCPKG@@|$MCPKG|" "$fh"
+sed -i "s|@@DISKVAL@@|$DISK|" "$fh"
 case $KMETHOD in
   1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
 esac
-sed -i "s|KVAL|$kval|"                      "$fh"
+sed -i "s|@@KVAL@@|$kval|" "$fh"
 case $DESKTOP in
   1) dval="xfce" ;;
   2) dval="lxqt" ;;
   3) dval="headless" ;;
   *) dval="headless" ;; # Default fallback
 esac
-sed -i "s|DVAL|$dval|"                      "$fh"
+sed -i "s|@@DVAL@@|$dval|" "$fh"
 [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
-sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
-sed -i "s|FSTYPE|$FSTYPE|"                  "$fh"
+sed -i "s|@@GRUBTGT@@|$grubtgt|" "$fh"
+sed -i "s|@@FSTYPE@@|$FSTYPE|" "$fh"
 MAKEOPTS="-j$(nproc)"
-sed -i "s|MAKEOPTS|$MAKEOPTS|"              "$fh"
+sed -i "s|@@MAKEOPTS@@|$MAKEOPTS|" "$fh"
 
 openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
 openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
