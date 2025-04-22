@@ -484,8 +484,10 @@ sed -i "s|DVAL|$dval|"                      "$fh"
 [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
 sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
 sed -i "s|FSTYPE|$FSTYPE|"                  "$fh"
-sed -i "s|ROOTPW|$(openssl passwd -6 "$ROOT_PASS")|" "$fh"
-sed -i "s|USERPW|$(openssl passwd -6 "$USER_PASS")|" "$fh"
+ROOT_HASH=$(openssl passwd -6 "$ROOT_PASS")
+awk -v hash="$ROOT_HASH" '{gsub(/ROOTPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
+USER_HASH=$(openssl passwd -6 "$USER_PASS")
+awk -v hash="$USER_HASH" '{gsub(/USERPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
 MAKEOPTS="-j$(nproc)"
 sed -i "s|MAKEOPTS|$MAKEOPTS|"              "$fh"
 unset ROOT_PASS USER_PASS
