@@ -485,9 +485,11 @@ sed -i "s|DVAL|$dval|"                      "$fh"
 sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
 sed -i "s|FSTYPE|$FSTYPE|"                  "$fh"
 ROOT_HASH=$(openssl passwd -6 "$ROOT_PASS")
-awk -v hash="$ROOT_HASH" '{gsub(/ROOTPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
 USER_HASH=$(openssl passwd -6 "$USER_PASS")
-awk -v hash="$USER_HASH" '{gsub(/USERPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
+ROOT_HASH_ESCAPED=$(printf '%s\n' "$ROOT_HASH" | sed 's/[\/&$]/\\&/g')
+USER_HASH_ESCAPED=$(printf '%s\n' "$USER_HASH" | sed 's/[\/&$]/\\&/g')
+sed -i "s|ROOTPW|$ROOT_HASH_ESCAPED|g"      "$fh"
+sed -i "s|USERPW|$USER_HASH_ESCAPED|g"      "$fh"
 MAKEOPTS="-j$(nproc)"
 sed -i "s|MAKEOPTS|$MAKEOPTS|"              "$fh"
 unset ROOT_PASS USER_PASS
