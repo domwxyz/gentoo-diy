@@ -370,7 +370,18 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 mkdir -p /var/db/repos/gentoo
 emerge-webrsync
 
-eselect profile set default/linux/amd64
+if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+  echo "Found standard AMD64 profile #$profile_num"
+  eselect profile set "$profile_num"
+else
+  if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+    echo "Found AMD64 profile #$profile_num"
+    eselect profile set "$profile_num"
+  else
+    echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
+    eselect profile list
+  fi
+fi
 
 echo "${TZ_PLACEHOLDER}" > /etc/timezone
 emerge --config sys-libs/timezone-data --quiet
