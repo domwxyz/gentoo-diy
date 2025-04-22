@@ -340,56 +340,56 @@ cp -L /etc/resolv.conf /mnt/gentoo/etc/
 ########################  bind mounts  ################################
 for fs in proc sys dev; do mount --rbind /$fs /mnt/gentoo/$fs; mount --make-rslave /mnt/gentoo/$fs; done
 
-########################  chroot  #####################################
-log "Entering chroot …"
-
-# Create inside.sh script with direct variable insertion instead of placeholders
-cat > /mnt/gentoo/root/inside.sh <<EOF
+########################  second‑stage (inside chroot)  ###############
+cat > /mnt/gentoo/root/inside.sh <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/profile
 
-# Variables set from the outer script
-TZ="${TZ}"
-LOCALE="${LOCALE}"
-HOSTNAME="${HOSTNAME}"
-USERNAME="${USERNAME}"
-MICROCODE_PKG="${MCPKG}"
-VIDEO_CARDS="${VC}"
-DISK="${DISK}"
-KERNEL_METHOD="${kval}"
-DESKTOP_TYPE="${dval}"
-GRUB_TARGET="${grubtgt}"
-FILESYSTEM="${FSTYPE}"
-ESP_UUID="${ESP_UUID}"
-SWP_UUID="${SWP_UUID}"
-MAKEOPTS="${MAKEOPTS}"
+# -------- placeholders filled by outer script --------
+TZ_PLACEHOLDER="TZVAL"
+LOCALE_PLACEHOLDER="LOCALEVAL"
+HOST_PLACEHOLDER="HOSTVAL"
+USER_PLACEHOLDER="USERVAL"
+ROOTPW_PLACEHOLDER="ROOTPW"
+USERPW_PLACEHOLDER="USERPW"
+MICROCODE_PLACEHOLDER="MCPKG"
+VIDEO_PLACEHOLDER="VIDEOSTR"
+DISK_PLACEHOLDER="DISKVAL"
+KERNEL_PLACEHOLDER="KVAL"
+DESKTOP_PLACEHOLDER="DVAL"
+GRUBTARGET_PLACEHOLDER="GRUBTGT"
+FSTYPE_PLACEHOLDER="FSTYPE"
+ESP_UUID_PLACEHOLDER="ESP_UUID"
+SWP_UUID_PLACEHOLDER="SWP_UUID"
+MAKEOPTS_PLACEHOLDER="MAKEOPTS"
+# -----------------------------------------------------
 
 ### base config ###
 
-echo "\${TZ}" > /etc/timezone
+echo "${TZ_PLACEHOLDER}" > /etc/timezone
 emerge --config sys-libs/timezone-data --quiet
 
-echo "\${LOCALE} UTF-8" > /etc/locale.gen
+echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
 locale-gen
-eselect locale set \${LOCALE}.utf8
+eselect locale set ${LOCALE_PLACEHOLDER}.utf8
 env-update && source /etc/profile
 
-echo "HOSTNAME=\"\${HOSTNAME}\"" > /etc/conf.d/hostname
+echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
 # make.conf tweaks
-cat >> /etc/portage/make.conf <<MAKECONF
+cat >> /etc/portage/make.conf <<EOF
 USE="bluetooth pulseaudio"
-VIDEO_CARDS="\${VIDEO_CARDS}"
-MAKEOPTS="\${MAKEOPTS}"
-MAKECONF
+VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
+MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
+EOF
 
 ### sync & update ###
 emerge --sync --quiet
 emerge -uDN @world --quiet
 
 ### kernel ###
-case "\${KERNEL_METHOD}" in
+case "${KERNEL_PLACEHOLDER}" in
   genkernel)
       emerge --quiet sys-kernel/gentoo-sources sys-kernel/genkernel
       genkernel --menuconfig all ;;
@@ -407,11 +407,11 @@ case "\${KERNEL_METHOD}" in
 esac
 
 ### firmware ###
-[[ -n "\${MICROCODE_PKG}" ]] && emerge --quiet "\${MICROCODE_PKG}"
-[[ -n "\$(grep -E 'AMD|Intel' /proc/cpuinfo | head -1)" ]] && emerge --quiet sys-kernel/linux-firmware
+[[ -n "${MICROCODE_PLACEHOLDER}" ]] && emerge --quiet "${MICROCODE_PLACEHOLDER}"
+[[ -n "$(grep -E 'AMD|Intel' /proc/cpuinfo | head -1)" ]] && emerge --quiet sys-kernel/linux-firmware
 
 ### desktop ###
-case "\${DESKTOP_TYPE}" in
+case "${DESKTOP_PLACEHOLDER}" in
   xfce)
     emerge --quiet xorg-server xfce-base/xfce4 xfce4-meta \
       lightdm lightdm-gtk-greeter \ 
@@ -432,37 +432,69 @@ emerge --quiet networkmanager dhcpcd
 rc-update add NetworkManager default
 
 ### users ###
-echo "root:${ROOT_HASH}" | chpasswd -e
-useradd -m -G wheel,audio,video \${USERNAME}
-echo "\${USERNAME}:${USER_HASH}" | chpasswd -e
+echo "root:${ROOTPW_PLACEHOLDER}" | chpasswd -e
+useradd -m -G wheel,audio,video ${USER_PLACEHOLDER}
+echo "${USER_PLACEHOLDER}:${USERPW_PLACEHOLDER}" | chpasswd -e
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 ### fstab ###
 cat > /etc/fstab <<FSTAB
-LABEL=gentoo      /      \${FILESYSTEM}  noatime     0 1
-PARTUUID=\${ESP_UUID} /boot  vfat   defaults    0 2
-UUID=\${SWP_UUID}     none   swap   sw          0 0
+LABEL=gentoo      /      ${FSTYPE_PLACEHOLDER}  noatime     0 1
+PARTUUID=${ESP_UUID_PLACEHOLDER} /boot  vfat   defaults    0 2
+UUID=${SWP_UUID_PLACEHOLDER}     none   swap   sw          0 0
 FSTAB
 
 ### bootloader ###
 emerge --quiet grub efibootmgr
-if [[ "\${GRUB_TARGET}" == x86_64-efi ]]; then
+if [[ "${GRUBTARGET_PLACEHOLDER}" == x86_64-efi ]]; then
   grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
 else
-  grub-install --target=i386-pc \${DISK}
+  grub-install --target=i386-pc ${DISK_PLACEHOLDER}
 fi
 grub-mkconfig  -o /boot/grub/grub.cfg
 
 emerge --depclean --quiet
 
 echo "🎉  Done inside chroot."
-EOF
+EOS
+chmod +x /mnt/gentoo/root/inside.sh
 
-# Ensure script is executable
-chmod 755 /mnt/gentoo/root/inside.sh
+########################  substitute vars  ############################
+fh=/mnt/gentoo/root/inside.sh
+sed -i "s|TZVAL|$TZ|"                       "$fh"
+sed -i "s|LOCALEVAL|$LOCALE|"               "$fh"
+sed -i "s|HOSTVAL|$HOSTNAME|"               "$fh"
+sed -i "s|USERVAL|$USERNAME|"               "$fh"
+sed -i "s|VIDEOSTR|$VC|"                    "$fh"
+sed -i "s|ESP_UUID|$ESP_UUID|"              "$fh"
+sed -i "s|SWP_UUID|$SWP_UUID|"              "$fh"
+sed -i "s|MCPKG|$MCPKG|"                    "$fh"
+sed -i "s|DISKVAL|$DISK|" "$fh"
+case $KMETHOD in
+  1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
+esac
+sed -i "s|KVAL|$kval|"                      "$fh"
+case $DESKTOP in
+  1) dval="xfce" ;;
+  2) dval="lxqt" ;;
+  3) dval="headless" ;;
+  *) dval="headless" ;; # Default fallback
+esac
+sed -i "s|DVAL|$dval|"                      "$fh"
+[[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
+sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
+sed -i "s|FSTYPE|$FSTYPE|"                  "$fh"
+ROOT_HASH=$(openssl passwd -6 "$ROOT_PASS")
+awk -v hash="$ROOT_HASH" '{gsub(/ROOTPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
+USER_HASH=$(openssl passwd -6 "$USER_PASS")
+awk -v hash="$USER_HASH" '{gsub(/USERPW/, hash); print}' "$fh" > "$fh.tmp" && mv "$fh.tmp" "$fh"
+MAKEOPTS="-j$(nproc)"
+sed -i "s|MAKEOPTS|$MAKEOPTS|"              "$fh"
+unset ROOT_PASS USER_PASS
 
-# Execute the chroot script
-chroot /mnt/gentoo /bin/bash /root/inside.sh
+########################  chroot  #####################################
+log "Entering chroot …"
+chroot /mnt/gentoo /bin/bash -x /root/inside.sh
 
 ########################  cleanup  ####################################
 log "Cleaning up …"
