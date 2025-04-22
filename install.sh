@@ -326,7 +326,7 @@ trap cleanup EXIT INT TERM
 ########################  stage3  #####################################
 log "Fetching stage3 manifest …"
 STAGE=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
-        | grep -E 'stage3-.*\.tar\.xz$' | head -n1) \
+        | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
         || die "Unable to parse stage3 manifest"
 
 log "Downloading latest stage3: ${STAGE}"
