@@ -351,8 +351,8 @@ TZ_PLACEHOLDER="TZVAL"
 LOCALE_PLACEHOLDER="LOCALEVAL"
 HOST_PLACEHOLDER="HOSTVAL"
 USER_PLACEHOLDER="USERVAL"
-ROOTPW_PLACEHOLDER="ROOTPW"
-USERPW_PLACEHOLDER="USERPW"
+ROOT_HASH=$(cat /root/root_hash.txt)
+USER_HASH=$(cat /root/user_hash.txt)
 MICROCODE_PLACEHOLDER="MCPKG"
 VIDEO_PLACEHOLDER="VIDEOSTR"
 DISK_PLACEHOLDER="DISKVAL"
@@ -432,9 +432,9 @@ emerge --quiet networkmanager dhcpcd
 rc-update add NetworkManager default
 
 ### users ###
-echo "root:${ROOTPW_PLACEHOLDER}" | chpasswd -e
+echo "root:${ROOT_HASH}" | chpasswd -e
 useradd -m -G wheel,audio,video ${USER_PLACEHOLDER}
-echo "${USER_PLACEHOLDER}:${USERPW_PLACEHOLDER}" | chpasswd -e
+echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 ### fstab ###
@@ -484,14 +484,11 @@ sed -i "s|DVAL|$dval|"                      "$fh"
 [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
 sed -i "s|GRUBTGT|$grubtgt|"                "$fh"
 sed -i "s|FSTYPE|$FSTYPE|"                  "$fh"
-ROOT_HASH=$(openssl passwd -6 "$ROOT_PASS")
-USER_HASH=$(openssl passwd -6 "$USER_PASS")
-ROOT_HASH_ESCAPED=$(printf '%s\n' "$ROOT_HASH" | sed 's/[\/&$]/\\&/g')
-USER_HASH_ESCAPED=$(printf '%s\n' "$USER_HASH" | sed 's/[\/&$]/\\&/g')
-sed -i "s|ROOTPW|$ROOT_HASH_ESCAPED|g"      "$fh"
-sed -i "s|USERPW|$USER_HASH_ESCAPED|g"      "$fh"
 MAKEOPTS="-j$(nproc)"
 sed -i "s|MAKEOPTS|$MAKEOPTS|"              "$fh"
+
+openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
+openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
 unset ROOT_PASS USER_PASS
 
 ########################  chroot  #####################################
