@@ -414,7 +414,7 @@ case "${KERNEL_PLACEHOLDER}" in
       cd /usr/src/linux
       echo "▶ Unattended kernel build (defconfig)…"
       make defconfig
-      make -j\$(nproc)
+      make -j$(nproc)
       make modules_install install ;;
   manual)
       emerge --quiet sys-kernel/gentoo-sources
@@ -430,7 +430,7 @@ esac
 case "${DESKTOP_PLACEHOLDER}" in
   xfce)
     emerge --quiet xorg-server xfce-base/xfce4 xfce4-meta \
-      lightdm lightdm-gtk-greeter \ 
+      lightdm lightdm-gtk-greeter \
       pipewire wireplumber firefox
     rc-update add lightdm default ;;
   lxqt)
