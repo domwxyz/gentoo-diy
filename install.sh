@@ -10,6 +10,7 @@
 #  • Ext4 (default) or Btrfs root filesystem
 # =====================================================================
 set -euo pipefail
+trap 'printf "${red}❌  Error on line %d – exiting\n" "$LINENO" >&2' ERR
 IFS=$'\n\t'
 
 ########################  cosmetics  ##################################
@@ -44,6 +45,10 @@ ask_pw() {
     fi
   done
 }
+
+########################  mirror selector  ############################
+# User can override with:  MIRROR=https://some.mirror ./install.sh
+GENTOO_MIRROR="${MIRROR:-https://distfiles.gentoo.org}"
 
 ########################  required tools  #############################
 for bin in curl wget sgdisk lsblk lspci lscpu awk openssl; do need "$bin"; done
@@ -319,10 +324,17 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 ########################  stage3  #####################################
-log "Downloading latest stage3 …"
-STAGE=$(curl -s https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt | awk 'NF{print $1}')
-wget -q --show-progress "https://distfiles.gentoo.org/releases/amd64/autobuilds/$STAGE"
-tar xpf stage3-*.tar.xz -C /mnt/gentoo --xattrs-include='*.*' --numeric-owner
+log "Fetching stage3 manifest …"
+STAGE=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
+        | grep -E '^stage3-.*\.tar\.xz$' | head -n1) \
+        || die "Unable to parse stage3 manifest"
+
+log "Downloading latest stage3: ${STAGE}"
+wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
+     "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE}"
+
+tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
+    --xattrs-include='*.*' --numeric-owner
 cp -L /etc/resolv.conf /mnt/gentoo/etc/
 
 ########################  bind mounts  ################################
