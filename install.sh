@@ -346,6 +346,11 @@ cat > /mnt/gentoo/root/inside.sh <<'EOS'
 set -euo pipefail
 source /etc/profile
 
+mkdir -p /etc/portage/package.license
+echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
+mkdir -p /etc/portage/package.accept_keywords
+echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+
 # -------- placeholders filled by outer script --------
 TZ_PLACEHOLDER="@@TZVAL@@"
 LOCALE_PLACEHOLDER="@@LOCALEVAL@@"
@@ -421,10 +426,6 @@ case "${KERNEL_PLACEHOLDER}" in
       echo "‼  MANUAL KERNEL SELECTED ‼"
       echo "   Compile & install your kernel before rebooting." ;;
 esac
-
-echo "ACCEPT_LICENSE=\"* -@EULA linux-fw-redistributable\"" >> /etc/portage/make.conf
-mkdir -p /etc/portage/package.accept_keywords
-echo "sys-kernel/linux-firmware ~amd64" >> /etc/portage/package.accept_keywords/firmware
 
 ### firmware ###
 [[ -n "${MICROCODE_PLACEHOLDER}" ]] && emerge --quiet "${MICROCODE_PLACEHOLDER}"
