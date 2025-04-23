@@ -61,34 +61,30 @@ log "Synchronising clock …"
 
 ########################  keyboard check  #############################
 detect_keyboard_layout() {
-  # Check for console keymap 
+  KEYBOARD_LAYOUT="us"
+  KEYBOARD_VARIANT=""
+  
   if [ -f /etc/conf.d/keymaps ]; then
-    KEYMAP=$(grep "^KEYMAP=" /etc/conf.d/keymaps | cut -d'"' -f2 | cut -d'=' -f2)
+    KEYMAP=$(grep "^KEYMAP=" /etc/conf.d/keymaps | cut -d'"' -f2 | cut -d'=' -f2 || echo "us")
   elif [ -f /etc/vconsole.conf ]; then
-    # For systemd-based live environments
-    KEYMAP=$(grep "^KEYMAP=" /etc/vconsole.conf | cut -d'=' -f2)
+    KEYMAP=$(grep "^KEYMAP=" /etc/vconsole.conf | cut -d'=' -f2 || echo "us")
   else
-    # Default fallback
     KEYMAP="us"
   fi
   
-  # X11 layout detection
   if [ -f /etc/X11/xorg.conf.d/00-keyboard.conf ]; then
-    XKBLAYOUT=$(grep "XkbLayout" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"')
+    XKBLAYOUT=$(grep "XkbLayout" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "$KEYMAP")
     XKBVARIANT=$(grep "XkbVariant" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "")
-  elif command -v setxkbmap >/dev/null 2>&1; then
-    # Try getting from setxkbmap if it's available
-    XKBLAYOUT=$(setxkbmap -query | grep layout | awk '{print $2}')
-    XKBVARIANT=$(setxkbmap -query | grep variant | awk '{print $2}' || echo "")
+  elif type setxkbmap >/dev/null 2>&1; then
+    XKBLAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}' || echo "$KEYMAP")
+    XKBVARIANT=$(setxkbmap -query 2>/dev/null | grep variant | awk '{print $2}' || echo "")
   else
-    # Use the console keymap as fallback
     XKBLAYOUT="$KEYMAP"
     XKBVARIANT=""
   fi
   
-  # Use X11 layout if available, otherwise console keymap
   KEYBOARD_LAYOUT="${XKBLAYOUT:-$KEYMAP}"
-  KEYBOARD_VARIANT="$XKBVARIANT"
+  KEYBOARD_VARIANT="${XKBVARIANT:-}"
   
   log "Detected keyboard layout: $KEYBOARD_LAYOUT${KEYBOARD_VARIANT:+ variant: $KEYBOARD_VARIANT}"
 }
