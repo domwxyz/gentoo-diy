@@ -413,9 +413,13 @@ emerge -uDN @world --quiet
 case "${KERNEL_PLACEHOLDER}" in
   genkernel)
       emerge --quiet sys-kernel/gentoo-sources sys-kernel/genkernel
+      eselect kernel list
+      eselect kernel set 1
       genkernel --menuconfig all ;;
   manual_auto)
       emerge --quiet sys-kernel/gentoo-sources
+      eselect kernel list
+      eselect kernel set 1
       cd /usr/src/linux
       echo "▶ Unattended kernel build (defconfig)…"
       make defconfig
@@ -423,6 +427,8 @@ case "${KERNEL_PLACEHOLDER}" in
       make modules_install install ;;
   manual)
       emerge --quiet sys-kernel/gentoo-sources
+      eselect kernel list
+      eselect kernel set 1
       echo "‼  MANUAL KERNEL SELECTED ‼"
       echo "   Compile & install your kernel before rebooting." ;;
 esac
@@ -434,14 +440,66 @@ esac
 ### desktop ###
 case "${DESKTOP_PLACEHOLDER}" in
   xfce)
-    emerge --quiet xorg-server xfce-base/xfce4 xfce4-meta \
+    # Install X.org with proper input drivers and desktop
+    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers \
+      x11-apps/xrandr x11-apps/xinit x11-apps/setxkbmap \
+      xfce-base/xfce4-meta \
       lightdm lightdm-gtk-greeter \
       pipewire wireplumber firefox
+      
+    # Create basic X configuration
+    mkdir -p /etc/X11/xorg.conf.d
+    
+    # Configure keyboard layout
+    echo 'Section "InputClass"
+        Identifier "keyboard-all"
+        Driver "evdev"
+        Option "XkbLayout" "us"
+        Option "XkbModel" "pc105"
+        MatchIsKeyboard "on"
+EndSection' > /etc/X11/xorg.conf.d/10-keyboard.conf
+    
+    # Configure touchpad if present
+    echo 'Section "InputClass"
+        Identifier "touchpad"
+        Driver "libinput"
+        MatchIsTouchpad "on"
+        Option "Tapping" "on"
+        Option "NaturalScrolling" "true"
+EndSection' > /etc/X11/xorg.conf.d/30-touchpad.conf
+    
     rc-update add lightdm default ;;
+    
   lxqt)
-    emerge --quiet xorg-server lxqt-meta lxqt-session \
+    # Install X.org with proper input drivers and desktop
+    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers \
+      x11-apps/xrandr x11-apps/xinit x11-apps/setxkbmap \
+      lxqt-meta lxqt-session \
       lxdm pipewire wireplumber firefox
+      
+    # Create basic X configuration
+    mkdir -p /etc/X11/xorg.conf.d
+    
+    # Configure keyboard layout
+    echo 'Section "InputClass"
+        Identifier "keyboard-all"
+        Driver "evdev"
+        Option "XkbLayout" "us"
+        Option "XkbModel" "pc105"
+        MatchIsKeyboard "on"
+EndSection' > /etc/X11/xorg.conf.d/10-keyboard.conf
+    
+    # Configure touchpad if present
+    echo 'Section "InputClass"
+        Identifier "touchpad"
+        Driver "libinput"
+        MatchIsTouchpad "on"
+        Option "Tapping" "on"
+        Option "NaturalScrolling" "true"
+EndSection' > /etc/X11/xorg.conf.d/30-touchpad.conf
+    
     rc-update add lxdm default ;;
+    
   headless)
     echo "▶ Headless server selected - skipping desktop environment"
     emerge --quiet net-misc/openssh
