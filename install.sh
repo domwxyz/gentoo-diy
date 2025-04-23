@@ -10,7 +10,7 @@
 #  • Ext4 (default) or Btrfs root filesystem
 # =====================================================================
 set -euo pipefail
-trap 'printf "${red}❌  Error on line %d – exiting\n" "$LINENO" >&2' ERR
+trap 'printf "${red}❌  Error on line %d - exiting\n" "$LINENO" >&2' ERR
 IFS=$'\n\t'
 
 ########################  cosmetics  ##################################
@@ -247,7 +247,7 @@ ask SWAPSIZE "Swap size in GiB" "$def_swap"
 CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
 case "$CPU_VENDOR" in
   GenuineIntel) MCPKG="sys-firmware/intel-microcode" ;;
-  AuthenticAMD) MCPKG="sys-firmware/amd-microcode"   ;;
+  AuthenticAMD) MCPKG="sys-kernel/linux-firmware"   ;;
   *)            MCPKG="" ;;
 esac
 ask MCPKG "Detected $CPU_VENDOR CPU. Microcode pkg" "$MCPKG"
@@ -507,6 +507,84 @@ esac
 ### firmware ###
 [[ -n "${MICROCODE_PLACEHOLDER}" ]] && emerge --quiet "${MICROCODE_PLACEHOLDER}"
 [[ -n "$(grep -E 'AMD|Intel' /proc/cpuinfo | head -1)" ]] && emerge --quiet sys-kernel/linux-firmware
+
+### laptop-specific tools ###
+if [ -d /sys/class/power_supply/BAT0 ] || [ -d /sys/class/power_supply/BAT1 ]; then
+  echo "▶ Laptop detected, installing power management tools..."
+  emerge --quiet sys-power/tlp sys-power/powertop
+  
+  rc-update add tlp default
+  
+  # Check for ThinkPad-specific hardware
+  if dmidecode -s system-product-name | grep -q "ThinkPad"; then
+    echo "▶ ThinkPad detected, installing additional tools..."
+    emerge --quiet app-laptop/thinkfan
+    
+    if [ ! -f /etc/thinkfan.conf ]; then
+      echo "tp_fan /proc/acpi/ibm/fan
+hwmon /sys/class/thermal/thermal_zone0/temp
+
+(0,     0,      55)
+(1,     48,     65)
+(2,     50,     70)
+(3,     52,     75)
+(4,     56,     80)
+(5,     63,     85)
+(7,     68,     95)
+" > /etc/thinkfan.conf
+    fi
+    
+    rc-update add thinkfan default
+  fi
+  
+  echo "[Unit]
+Description=PowerTOP auto tune
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/powertop --auto-tune
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target" > /etc/systemd/system/powertop.service
+  
+  echo "▶ Power management tools installed"
+fi
+
+### Wi-Fi hardware detection and firmware ###
+if lspci | grep -q -i 'network\|wireless'; then
+  echo "▶ Detecting Wi-Fi hardware..."
+  
+  emerge --quiet net-wireless/iw net-wireless/wpa_supplicant
+  
+  # Intel Wi-Fi
+  if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
+    echo "▶ Intel Wi-Fi detected, installing firmware..."
+    emerge --quiet sys-firmware/iwlwifi-firmware
+  fi
+  
+  # Broadcom Wi-Fi
+  if lspci | grep -i -E 'broadcom' >/dev/null; then
+    echo "▶ Broadcom Wi-Fi detected, installing firmware..."
+    emerge --quiet net-wireless/broadcom-sta
+    
+    echo "wl" >> /etc/modules-load.d/broadcom.conf
+  fi
+  
+  # Realtek Wi-Fi
+  if lspci | grep -i -E 'realtek.*wireless|rtl8' >/dev/null; then
+    echo "▶ Realtek Wi-Fi detected..."
+    emerge --quiet sys-kernel/linux-firmware
+  fi
+  
+  # Atheros Wi-Fi
+  if lspci | grep -i -E 'atheros|qualcomm.*wireless' >/dev/null; then
+    echo "▶ Atheros/Qualcomm Wi-Fi detected..."
+    emerge --quiet sys-kernel/linux-firmware
+  fi
+  
+  echo "▶ Wi-Fi firmware installed"
+fi
 
 ### desktop ###
 case "${DESKTOP_PLACEHOLDER}" in
