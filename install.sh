@@ -404,120 +404,155 @@ SWP_UUID_PLACEHOLDER="@@SWP_UUID@@"
 MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 # -----------------------------------------------------
 
-### base config ###
+echo "▶ Starting Gentoo installation inside chroot environment..."
 
+### REPOSITORY SETUP ###
+
+echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
 emerge-webrsync
 
-if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-  echo "Found standard AMD64 profile #$profile_num"
-  eselect profile set "$profile_num"
-else
-  if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-    echo "Found AMD64 profile #$profile_num"
+# Initialize portage
+echo "▶ Selecting profile..."
+if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+    echo "  Found default AMD64 OpenRC profile #$profile_num"
     eselect profile set "$profile_num"
-  else
-    echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
-    eselect profile list
-  fi
+else
+    echo "  No standard AMD64 OpenRC profile found. Using first available AMD64 profile."
+    eselect profile list | grep -i "amd64" | head -1
+    profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+')
+    eselect profile set "$profile_num"
 fi
 
+### SYSTEM CONFIGURATION ###
+
+echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
 echo "${TZ_PLACEHOLDER}" > /etc/timezone
 emerge --config sys-libs/timezone-data --quiet
 
+echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
 echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
 locale-gen
-eselect locale set ${LOCALE_PLACEHOLDER}
+eselect locale set "${LOCALE_PLACEHOLDER}"
 env-update && source /etc/profile
 
+echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
 echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
 rc-update add keymaps boot
 
-if [[ "$DESKTOP_PLACEHOLDER" != "headless" ]]; then
-  mkdir -p /etc/X11/xorg.conf.d
-  cat > /etc/X11/xorg.conf.d/10-keyboard.conf <<EOF
-Section "InputClass"
-    Identifier "keyboard-all"
-    Driver "libinput"
-    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
-    MatchIsKeyboard "on"
-EOF
+echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
+echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
-  # Add variant if present
-  if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-    echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/10-keyboard.conf
-  fi
-  
-  echo "EndSection" >> /etc/X11/xorg.conf.d/10-keyboard.conf
-fi
-
-echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
-
+# Configure make.conf with detected hardware
+echo "▶ Configuring make.conf with detected hardware..."
 cat >> /etc/portage/make.conf <<EOF
-USE="bluetooth pulseaudio"
+# Hardware-specific USE flags
+USE="acpi bluetooth dbus pulseaudio udev"
+
+# Video hardware support
 VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
+
+# Build options
 MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 EOF
 
-### sync & update ###
+mkdir -p /etc/portage/package.use
+echo "media-libs/mesa -vaapi" > /etc/portage/package.use/mesa
+
+# Setup package licenses
+mkdir -p /etc/portage/package.license
+echo "sys-kernel/linux-firmware linux-fw-redistributable no-source-code" > /etc/portage/package.license/firmware
+echo "sys-firmware/intel-microcode intel-ucode" >> /etc/portage/package.license/firmware
+
+# For potentially unstable packages
+mkdir -p /etc/portage/package.accept_keywords
+echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+
+### SYNC AND UPDATE ###
+
+echo "▶ Syncing repositories..."
 if ! emerge --sync --quiet; then
-  echo "Standard sync failed, trying alternative methods..."
-  
-  # Clean any potentially corrupted repository metadata
-  rm -rf /var/db/repos/gentoo/metadata/cache/
-  
-  emerge --sync --metadata
-  
-  if [ $? -ne 0 ]; then
-    echo "Trying final sync method..."
-    emaint sync -r gentoo
-  fi
+    echo "▶ Standard sync failed, trying metadata-only sync..."
+    emerge --sync --metadata
+    
+    if [ $? -ne 0 ]; then
+        echo "▶ Trying emaint sync as fallback..."
+        emaint sync -r gentoo
+    fi
 fi
 
+echo "▶ Updating @world set..."
 emerge -uDN @world --quiet
 
-### kernel ###
+### KERNEL INSTALLATION ###
+
+echo "▶ Installing and configuring kernel..."
 case "${KERNEL_PLACEHOLDER}" in
-  genkernel)
-      emerge --quiet sys-kernel/gentoo-sources sys-kernel/genkernel
-      eselect kernel list
-      eselect kernel set 1
-      genkernel --menuconfig all ;;
-  manual_auto)
-      emerge --quiet sys-kernel/gentoo-sources
-      eselect kernel list
-      eselect kernel set 1
-      cd /usr/src/linux
-      echo "▶ Unattended kernel build (defconfig)…"
-      make defconfig
-      make -j$(nproc)
-      make modules_install install ;;
-  manual)
-      emerge --quiet sys-kernel/gentoo-sources
-      eselect kernel list
-      eselect kernel set 1
-      echo "‼  MANUAL KERNEL SELECTED ‼"
-      echo "   Compile & install your kernel before rebooting." ;;
+    genkernel)
+        echo "▶ Installing genkernel, kernel sources, and required tools..."
+        emerge --quiet sys-kernel/gentoo-sources sys-kernel/genkernel sys-apps/pciutils
+        eselect kernel set 1
+        echo "▶ Running genkernel with menuconfig..."
+        genkernel --menuconfig all
+        ;;
+    manual_auto)
+        echo "▶ Installing kernel sources for manual-automatic build..."
+        emerge --quiet sys-kernel/gentoo-sources
+        eselect kernel set 1
+        cd /usr/src/linux
+        echo "▶ Building kernel with default configuration..."
+        make defconfig
+        make -j$(nproc)
+        make modules_install install
+        ;;
+    manual)
+        echo "▶ Installing kernel sources for manual build..."
+        emerge --quiet sys-kernel/gentoo-sources
+        eselect kernel set 1
+        echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
+        echo "⚠ You must compile and install the kernel before rebooting"
+        echo "⚠ For reference:"
+        echo "⚠   cd /usr/src/linux"
+        echo "⚠   make menuconfig"
+        echo "⚠   make -j$(nproc)"
+        echo "⚠   make modules_install install"
+        ;;
 esac
 
-### firmware ###
-[[ -n "${MICROCODE_PLACEHOLDER}" ]] && emerge --quiet "${MICROCODE_PLACEHOLDER}"
-[[ -n "$(grep -E 'AMD|Intel' /proc/cpuinfo | head -1)" ]] && emerge --quiet sys-kernel/linux-firmware
+### FIRMWARE INSTALLATION ###
 
-### laptop-specific tools ###
-if [ -d /sys/class/power_supply/BAT0 ] || [ -d /sys/class/power_supply/BAT1 ]; then
-  echo "▶ Laptop detected, installing power management tools..."
-  emerge --quiet sys-power/tlp sys-power/powertop
-  
-  rc-update add tlp default
-  
-  # Check for ThinkPad-specific hardware
-  if dmidecode -s system-product-name | grep -q "ThinkPad"; then
-    echo "▶ ThinkPad detected, installing additional tools..."
-    emerge --quiet app-laptop/thinkfan
+echo "▶ Installing firmware packages..."
+# Install microcode for CPU
+if [[ -n "${MICROCODE_PLACEHOLDER}" ]]; then
+    echo "▶ Installing CPU microcode: ${MICROCODE_PLACEHOLDER}"
+    emerge --quiet "${MICROCODE_PLACEHOLDER}"
+fi
+
+# Always install linux-firmware for general hardware
+echo "▶ Installing system firmware..."
+emerge --quiet sys-kernel/linux-firmware
+
+### HARDWARE DETECTION ###
+
+# Laptop-specific tools
+if [ -d /sys/class/power_supply/BAT* ]; then
+    echo "▶ Laptop detected, installing power management..."
+    emerge --quiet sys-power/tlp sys-power/powertop
+    rc-update add tlp default
     
-    if [ ! -f /etc/thinkfan.conf ]; then
-      echo "tp_fan /proc/acpi/ibm/fan
+    # Get system information for brand detection
+    SYSTEM_VENDOR=$(dmidecode -s system-manufacturer 2>/dev/null | tr '[:lower:]' '[:upper:]')
+    SYSTEM_PRODUCT=$(dmidecode -s system-product-name 2>/dev/null)
+    
+    # ThinkPad-specific configuration
+    if echo "$SYSTEM_VENDOR $SYSTEM_PRODUCT" | grep -q "THINKPAD" || echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
+        echo "▶ ThinkPad detected, installing additional tools..."
+        emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
+        
+        # Basic thinkfan config if it doesn't exist
+        if [ ! -f /etc/thinkfan.conf ]; then
+            cat > /etc/thinkfan.conf <<THINKFAN
+tp_fan /proc/acpi/ibm/fan
 hwmon /sys/class/thermal/thermal_zone0/temp
 
 (0,     0,      55)
@@ -527,141 +562,292 @@ hwmon /sys/class/thermal/thermal_zone0/temp
 (4,     56,     80)
 (5,     63,     85)
 (7,     68,     95)
-" > /etc/thinkfan.conf
+THINKFAN
+        fi
+        
+        rc-update add thinkfan default
+        
+        # Enable tp_smapi
+        echo "tp_smapi" > /etc/modules-load.d/tp_smapi.conf
     fi
     
-    rc-update add thinkfan default
-  fi
-  
-  echo "[Unit]
-Description=PowerTOP auto tune
-
-[Service]
-Type=oneshot
-ExecStart=/usr/sbin/powertop --auto-tune
-RemainAfterExit=true
-
-[Install]
-WantedBy=multi-user.target" > /etc/systemd/system/powertop.service
-  
-  echo "▶ Power management tools installed"
+    # Dell Latitude/Precision configuration
+    if echo "$SYSTEM_VENDOR" | grep -q "DELL" && echo "$SYSTEM_PRODUCT" | grep -q -E "Latitude|Precision"; then
+        echo "▶ Dell Latitude/Precision detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
+        
+        # Dell-specific power management
+        mkdir -p /etc/tlp.d/
+        echo "# Dell-specific power management settings
+CPU_SCALING_GOVERNOR_ON_AC=performance
+CPU_SCALING_GOVERNOR_ON_BAT=powersave
+CPU_ENERGY_PERF_POLICY_ON_AC=performance
+CPU_ENERGY_PERF_POLICY_ON_BAT=power
+" > /etc/tlp.d/00-dell.conf
+    fi
+    
+    # HP EliteBook/ProBook configuration
+    if echo "$SYSTEM_VENDOR" | grep -q "HP" && echo "$SYSTEM_PRODUCT" | grep -q -E "EliteBook|ProBook"; then
+        echo "▶ HP EliteBook/ProBook detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
+        
+        # HP-specific power management
+        mkdir -p /etc/tlp.d/
+        echo "# HP-specific power management settings
+CPU_SCALING_GOVERNOR_ON_AC=performance
+CPU_SCALING_GOVERNOR_ON_BAT=powersave
+PCIE_ASPM_ON_BAT=powersupersave
+" > /etc/tlp.d/00-hp.conf
+    fi
+    
+    # Lenovo (non-ThinkPad) configuration
+    if echo "$SYSTEM_VENDOR" | grep -q "LENOVO" && ! echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
+        echo "▶ Lenovo laptop detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
+    fi
+    
+    echo "▶ Power management tools installed"
 fi
 
-### Wi-Fi hardware detection and firmware ###
+# Check for virtualization environments
+echo "▶ Checking for virtualization environment..."
+if dmesg | grep -qi "virtualbox"; then
+    echo "▶ VirtualBox detected, installing guest additions..."
+    emerge --quiet app-emulation/virtualbox-guest-additions
+    rc-update add virtualbox-guest-additions default
+    
+    # Add user to the vboxguest group
+    usermod -aG vboxguest "${USER_PLACEHOLDER}"
+elif dmesg | grep -qi "qemu\|kvm"; then
+    echo "▶ QEMU/KVM virtual machine detected, installing guest tools..."
+    emerge --quiet app-emulation/qemu-guest-agent
+    rc-update add qemu-guest-agent default
+fi
+
+# Wi-Fi setup
 if lspci | grep -q -i 'network\|wireless'; then
-  echo "▶ Detecting Wi-Fi hardware..."
-  
-  emerge --quiet net-wireless/iw net-wireless/wpa_supplicant
-  
-  # Intel Wi-Fi
-  if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
-    echo "▶ Intel Wi-Fi detected, installing firmware..."
-    emerge --quiet sys-firmware/iwlwifi-firmware
-  fi
-  
-  # Broadcom Wi-Fi
-  if lspci | grep -i -E 'broadcom' >/dev/null; then
-    echo "▶ Broadcom Wi-Fi detected, installing firmware..."
-    emerge --quiet net-wireless/broadcom-sta
+    echo "▶ Wi-Fi hardware detected, installing drivers..."
+    emerge --quiet net-wireless/iw net-wireless/wpa_supplicant
     
-    echo "wl" >> /etc/modules-load.d/broadcom.conf
-  fi
-  
-  # Realtek Wi-Fi
-  if lspci | grep -i -E 'realtek.*wireless|rtl8' >/dev/null; then
-    echo "▶ Realtek Wi-Fi detected..."
-    emerge --quiet sys-kernel/linux-firmware
-  fi
-  
-  # Atheros Wi-Fi
-  if lspci | grep -i -E 'atheros|qualcomm.*wireless' >/dev/null; then
-    echo "▶ Atheros/Qualcomm Wi-Fi detected..."
-    emerge --quiet sys-kernel/linux-firmware
-  fi
-  
-  echo "▶ Wi-Fi firmware installed"
+    # Intel Wi-Fi
+    if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
+        echo "▶ Intel Wi-Fi detected..."
+        emerge --quiet sys-firmware/iwlwifi-firmware
+    fi
+    
+    # Broadcom Wi-Fi
+    if lspci | grep -i -E 'broadcom' >/dev/null; then
+        echo "▶ Broadcom Wi-Fi detected..."
+        emerge --quiet net-wireless/broadcom-sta
+        echo "wl" >> /etc/modules-load.d/broadcom.conf
+    fi
+    
+    # Realtek Wi-Fi - handled by linux-firmware
+    if lspci | grep -i -E 'realtek.*wireless|rtl8' >/dev/null; then
+        echo "▶ Realtek Wi-Fi detected..."
+    fi
+    
+    # Atheros Wi-Fi - handled by linux-firmware
+    if lspci | grep -i -E 'atheros|qualcomm.*wireless' >/dev/null; then
+        echo "▶ Atheros/Qualcomm Wi-Fi detected..."
+    fi
 fi
 
-### desktop ###
+### DESKTOP ENVIRONMENT ###
+
+echo "▶ Configuring system environment: ${DESKTOP_PLACEHOLDER}"
 case "${DESKTOP_PLACEHOLDER}" in
-  xfce)
-    # Install X.org with proper input drivers and desktop
-    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers \
-      x11-apps/xrandr x11-apps/xinit x11-apps/setxkbmap \
-      xfce-base/xfce4-meta \
-      lightdm lightdm-gtk-greeter \
-      pipewire wireplumber firefox
-      
-    # Create basic X configuration
-    mkdir -p /etc/X11/xorg.conf.d
-    
-    # Configure touchpad if present
-    echo 'Section "InputClass"
-        Identifier "touchpad"
-        Driver "libinput"
-        MatchIsTouchpad "on"
-        Option "Tapping" "on"
-        Option "NaturalScrolling" "true"
-EndSection' > /etc/X11/xorg.conf.d/30-touchpad.conf
-    
-    rc-update add lightdm default ;;
-    
-  lxqt)
-    # Install X.org with proper input drivers and desktop
-    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers \
-      x11-apps/xrandr x11-apps/xinit x11-apps/setxkbmap \
-      lxqt-meta lxqt-session \
-      lxdm pipewire wireplumber firefox
-      
-    # Create basic X configuration
-    mkdir -p /etc/X11/xorg.conf.d
-    
-    # Configure touchpad if present
-    echo 'Section "InputClass"
-        Identifier "touchpad"
-        Driver "libinput"
-        MatchIsTouchpad "on"
-        Option "Tapping" "on"
-        Option "NaturalScrolling" "true"
-EndSection' > /etc/X11/xorg.conf.d/30-touchpad.conf
-    
-    rc-update add lxdm default ;;
-    
-  headless)
-    echo "▶ Headless server selected - skipping desktop environment"
-    emerge --quiet net-misc/openssh
-    rc-update add sshd default ;;
+    xfce)
+        echo "▶ Installing XFCE desktop environment..."
+        # Install X.org server and basic drivers
+        emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
+        
+        # Install XFCE and display manager
+        emerge --quiet xfce-base/xfce4-meta x11-misc/lightdm x11-misc/lightdm-gtk-greeter
+        
+        # Install audio and common applications
+        emerge --quiet media-sound/pipewire media-video/wireplumber www-client/firefox
+        
+        # Configure keyboard in X11
+        mkdir -p /etc/X11/xorg.conf.d
+        cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<KEYBOARD
+Section "InputClass"
+    Identifier "keyboard-all"
+    Driver "libinput"
+    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
+KEYBOARD
+
+        # Add variant if specified
+        if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
+            echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        fi
+        
+        echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        
+        # Enable touchpad if present
+        if [ -d /sys/class/input/mouse* ] || [ -d /sys/class/input/event* ]; then
+            cat > /etc/X11/xorg.conf.d/30-touchpad.conf <<TOUCHPAD
+Section "InputClass"
+    Identifier "touchpad"
+    Driver "libinput"
+    MatchIsTouchpad "on"
+    Option "Tapping" "on"
+    Option "NaturalScrolling" "true"
+    Option "DisableWhileTyping" "true"
+EndSection
+TOUCHPAD
+        fi
+        
+        # Enable display manager
+        rc-update add lightdm default
+        ;;
+        
+    lxqt)
+        echo "▶ Installing LXQt desktop environment..."
+        # Install X.org server and basic drivers
+        emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
+        
+        # Install LXQt and display manager
+        emerge --quiet lxqt-base/lxqt-meta lxde-base/lxdm
+        
+        # Install audio and common applications
+        emerge --quiet media-sound/pipewire media-video/wireplumber www-client/firefox
+        
+        # Configure keyboard in X11
+        mkdir -p /etc/X11/xorg.conf.d
+        cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<KEYBOARD
+Section "InputClass"
+    Identifier "keyboard-all"
+    Driver "libinput"
+    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
+KEYBOARD
+
+        # Add variant if specified
+        if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
+            echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        fi
+        
+        echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        
+        # Enable touchpad if present
+        if [ -d /sys/class/input/mouse* ] || [ -d /sys/class/input/event* ]; then
+            cat > /etc/X11/xorg.conf.d/30-touchpad.conf <<TOUCHPAD
+Section "InputClass"
+    Identifier "touchpad"
+    Driver "libinput"
+    MatchIsTouchpad "on"
+    Option "Tapping" "on"
+    Option "NaturalScrolling" "true"
+    Option "DisableWhileTyping" "true"
+EndSection
+TOUCHPAD
+        fi
+        
+        # Enable display manager
+        rc-update add lxdm default
+        ;;
+        
+    headless|*)
+        echo "▶ Setting up headless server configuration..."
+        emerge --quiet net-misc/openssh app-admin/sudo
+        rc-update add sshd default
+        ;;
 esac
 
-### network ###
-emerge --quiet networkmanager dhcpcd
+### NETWORK CONFIGURATION ###
+
+echo "▶ Setting up network management..."
+emerge --quiet net-misc/networkmanager net-misc/dhcpcd
+
 rc-update add NetworkManager default
 
-### users ###
-echo "root:${ROOT_HASH}" | chpasswd -e
-useradd -m -G wheel,audio,video ${USER_PLACEHOLDER}
-echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
-echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
+# Create a default NetworkManager connection config directory with proper permissions
+mkdir -p /etc/NetworkManager/system-connections
+chmod 700 /etc/NetworkManager/system-connections
 
-### fstab ###
+# Configure NetworkManager to use dhcpcd
+mkdir -p /etc/NetworkManager/conf.d/
+echo "[main]
+dhcp=dhcpcd" > /etc/NetworkManager/conf.d/dhclient.conf
+
+# For Wi-Fi management
+emerge --quiet net-wireless/iwd
+if lspci | grep -q -i 'network\|wireless'; then
+    echo "▶ Ensuring NetworkManager can manage Wi-Fi connections..."
+    mkdir -p /etc/NetworkManager/conf.d/
+    echo "[device]
+wifi.backend=iwd" > /etc/NetworkManager/conf.d/wifi_backend.conf
+fi
+
+### USER ACCOUNTS ###
+
+echo "▶ Setting up user accounts..."
+# Set root password
+echo "root:${ROOT_HASH}" | chpasswd -e
+
+# Create regular user
+useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
+echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
+
+# Configure sudo access
+mkdir -p /etc/sudoers.d
+echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
+
+### FILESYSTEM CONFIGURATION ###
+
+echo "▶ Configuring filesystem..."
+# Set up fstab
 cat > /etc/fstab <<FSTAB
-LABEL=gentoo      /      ${FSTYPE_PLACEHOLDER}  noatime     0 1
-PARTUUID=${ESP_UUID_PLACEHOLDER} /boot  vfat   defaults    0 2
-UUID=${SWP_UUID_PLACEHOLDER}     none   swap   sw          0 0
+# <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
+LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
+PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
+UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
 
-### bootloader ###
-emerge --quiet grub efibootmgr
-if [[ "${GRUBTARGET_PLACEHOLDER}" == x86_64-efi ]]; then
-  grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
-else
-  grub-install --target=i386-pc ${DISK_PLACEHOLDER}
-fi
-grub-mkconfig  -o /boot/grub/grub.cfg
+### BOOTLOADER INSTALLATION ###
 
+echo "▶ Installing and configuring bootloader..."
+emerge --quiet sys-boot/grub:2
+
+# Install GRUB bootloader
+if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+    emerge --quiet sys-boot/efibootmgr
+    echo "▶ Installing GRUB for UEFI system..."
+    grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
+else
+    echo "▶ Installing GRUB for BIOS system..."
+    grub-install --target=i386-pc "${DISK_PLACEHOLDER}"
+fi
+
+# Generate GRUB configuration
+echo "▶ Generating GRUB configuration..."
+echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
+grub-mkconfig -o /boot/grub/grub.cfg
+
+### FINAL CLEANUP ###
+
+echo "▶ Performing final cleanup..."
 emerge --depclean --quiet
 
-echo "🎉  Done inside chroot."
+### POST-INSTALLATION NOTES ###
+
+echo "▶ Important notes for after first boot:"
+echo "  • Network is configured using NetworkManager"
+echo "  • Use 'nmtui' for a text-based network configuration interface"
+echo "  • Use 'nmcli con show' to list available connections"
+echo "  • Use 'nmcli dev wifi list' to scan for wireless networks"
+echo "  • Use 'nmcli dev wifi connect SSID password PASSWORD' to connect to a wireless network"
+echo "  • For more advanced configuration, edit files in /etc/NetworkManager/system-connections/"
+
+echo "🎉 Installation completed successfully!"
+echo "🔄 You can now reboot into your new Gentoo system."
 EOS
 chmod +x /mnt/gentoo/root/inside.sh
 
