@@ -59,6 +59,42 @@ exec < /dev/tty
 log "Synchronising clock …"
 (ntpd -q -g || chronyd -q) &>/dev/null || warn "NTP sync failed (continuing)"
 
+########################  keyboard check  #############################
+detect_keyboard_layout() {
+  # Check for console keymap 
+  if [ -f /etc/conf.d/keymaps ]; then
+    KEYMAP=$(grep "^KEYMAP=" /etc/conf.d/keymaps | cut -d'"' -f2 | cut -d'=' -f2)
+  elif [ -f /etc/vconsole.conf ]; then
+    # For systemd-based live environments
+    KEYMAP=$(grep "^KEYMAP=" /etc/vconsole.conf | cut -d'=' -f2)
+  else
+    # Default fallback
+    KEYMAP="us"
+  fi
+  
+  # X11 layout detection
+  if [ -f /etc/X11/xorg.conf.d/00-keyboard.conf ]; then
+    XKBLAYOUT=$(grep "XkbLayout" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"')
+    XKBVARIANT=$(grep "XkbVariant" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "")
+  elif command -v setxkbmap >/dev/null 2>&1; then
+    # Try getting from setxkbmap if it's available
+    XKBLAYOUT=$(setxkbmap -query | grep layout | awk '{print $2}')
+    XKBVARIANT=$(setxkbmap -query | grep variant | awk '{print $2}' || echo "")
+  else
+    # Use the console keymap as fallback
+    XKBLAYOUT="$KEYMAP"
+    XKBVARIANT=""
+  fi
+  
+  # Use X11 layout if available, otherwise console keymap
+  KEYBOARD_LAYOUT="${XKBLAYOUT:-$KEYMAP}"
+  KEYBOARD_VARIANT="$XKBVARIANT"
+  
+  log "Detected keyboard layout: $KEYBOARD_LAYOUT${KEYBOARD_VARIANT:+ variant: $KEYBOARD_VARIANT}"
+}
+
+detect_keyboard_layout
+
 ########################  net check  ##################################
 if ! ping -c1 -W2 1.1.1.1 &>/dev/null; then
   warn "No network connectivity detected."
@@ -354,6 +390,8 @@ echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/f
 # -------- placeholders filled by outer script --------
 TZ_PLACEHOLDER="@@TZVAL@@"
 LOCALE_PLACEHOLDER="@@LOCALEVAL@@"
+KEYBOARD_LAYOUT_PLACEHOLDER="@@KBLAYOUT@@"
+KEYBOARD_VARIANT_PLACEHOLDER="@@KBVARIANT@@"
 HOST_PLACEHOLDER="@@HOSTVAL@@"
 USER_PLACEHOLDER="@@USERVAL@@"
 ROOT_HASH=$(cat /root/root_hash.txt)
@@ -395,6 +433,27 @@ echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
 locale-gen
 eselect locale set ${LOCALE_PLACEHOLDER}
 env-update && source /etc/profile
+
+echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
+rc-update add keymaps boot
+
+if [[ "$DESKTOP_PLACEHOLDER" != "headless" ]]; then
+  mkdir -p /etc/X11/xorg.conf.d
+  cat > /etc/X11/xorg.conf.d/10-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "keyboard-all"
+    Driver "libinput"
+    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
+    MatchIsKeyboard "on"
+EOF
+
+  # Add variant if present
+  if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
+    echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/10-keyboard.conf
+  fi
+  
+  echo "EndSection" >> /etc/X11/xorg.conf.d/10-keyboard.conf
+fi
 
 echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
@@ -462,15 +521,6 @@ case "${DESKTOP_PLACEHOLDER}" in
     # Create basic X configuration
     mkdir -p /etc/X11/xorg.conf.d
     
-    # Configure keyboard layout
-    echo 'Section "InputClass"
-        Identifier "keyboard-all"
-        Driver "evdev"
-        Option "XkbLayout" "us"
-        Option "XkbModel" "pc105"
-        MatchIsKeyboard "on"
-EndSection' > /etc/X11/xorg.conf.d/10-keyboard.conf
-    
     # Configure touchpad if present
     echo 'Section "InputClass"
         Identifier "touchpad"
@@ -491,15 +541,6 @@ EndSection' > /etc/X11/xorg.conf.d/30-touchpad.conf
       
     # Create basic X configuration
     mkdir -p /etc/X11/xorg.conf.d
-    
-    # Configure keyboard layout
-    echo 'Section "InputClass"
-        Identifier "keyboard-all"
-        Driver "evdev"
-        Option "XkbLayout" "us"
-        Option "XkbModel" "pc105"
-        MatchIsKeyboard "on"
-EndSection' > /etc/X11/xorg.conf.d/10-keyboard.conf
     
     # Configure touchpad if present
     echo 'Section "InputClass"
@@ -554,6 +595,8 @@ chmod +x /mnt/gentoo/root/inside.sh
 fh=/mnt/gentoo/root/inside.sh
 sed -i "s|@@TZVAL@@|$TZ|" "$fh"
 sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$fh"
+sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$fh"
+sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$fh"
 sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$fh"
 sed -i "s|@@USERVAL@@|$USERNAME|" "$fh"
 sed -i "s|@@VIDEOSTR@@|$VC|" "$fh"
