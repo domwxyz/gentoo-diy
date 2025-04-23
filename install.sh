@@ -398,7 +398,6 @@ env-update && source /etc/profile
 
 echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
-# make.conf tweaks
 cat >> /etc/portage/make.conf <<EOF
 USE="bluetooth pulseaudio"
 VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
@@ -406,7 +405,20 @@ MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 EOF
 
 ### sync & update ###
-emerge --sync --quiet
+if ! emerge --sync --quiet; then
+  echo "Standard sync failed, trying alternative methods..."
+  
+  # Clean any potentially corrupted repository metadata
+  rm -rf /var/db/repos/gentoo/metadata/cache/
+  
+  emerge --sync --metadata
+  
+  if [ $? -ne 0 ]; then
+    echo "Trying final sync method..."
+    emaint sync -r gentoo
+  fi
+fi
+
 emerge -uDN @world --quiet
 
 ### kernel ###
