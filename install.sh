@@ -433,8 +433,6 @@ echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
 echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
 echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
 
-emerge --oneshot app-alternatives/awk
-
 ### SYSTEM CONFIGURATION ###
 
 echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
