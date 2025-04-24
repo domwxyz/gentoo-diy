@@ -379,6 +379,7 @@ set -euo pipefail
 source /etc/profile
 
 export FEATURES="-collision-protect -protect-owned -collision-detect"
+echo 'FEATURES="-collision-protect -protect-owned -collision-detect"' >> /etc/portage/make.conf
 
 mkdir -p /etc/portage/package.license
 echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
@@ -413,6 +414,11 @@ echo "▶ Starting Gentoo installation inside chroot environment..."
 echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
 emerge-webrsync
+
+mkdir -p /etc/portage/package.mask
+echo "app-alternatives/awk" >> /etc/portage/package.mask/awk
+
+emerge --quiet sys-apps/gawk
 
 echo "▶ Selecting profile..."
 if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
