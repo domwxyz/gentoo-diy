@@ -378,14 +378,6 @@ cat > /mnt/gentoo/root/inside.sh <<'EOS'
 set -euo pipefail
 source /etc/profile
 
-export FEATURES="-collision-protect -protect-owned -collision-detect"
-echo 'FEATURES="-collision-protect -protect-owned -collision-detect"' >> /etc/portage/make.conf
-
-mkdir -p /etc/portage/package.license
-echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
-mkdir -p /etc/portage/package.accept_keywords
-echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
-
 # -------- placeholders filled by outer script --------
 TZ_PLACEHOLDER="@@TZVAL@@"
 LOCALE_PLACEHOLDER="@@LOCALEVAL@@"
@@ -409,18 +401,49 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
-### REPOSITORY SETUP ###
+### PORTAGE CONFIGURATION - STEP 1 ###
+# Following Handbook Chapter 5 - Configuring Portage
+
+echo "▶ Configuring Portage..."
+# Create necessary directories for Portage configuration
+mkdir -p /etc/portage/package.use
+mkdir -p /etc/portage/package.license
+mkdir -p /etc/portage/package.accept_keywords
+mkdir -p /etc/portage/repos.conf
+mkdir -p /var/db/repos/gentoo
+
+# Set up firmware license acceptance
+echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
+echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+
+# Configure make.conf with detected hardware
+cat >> /etc/portage/make.conf <<EOF
+# Compiler options
+MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
+
+# Hardware-specific settings
+VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
+
+# Use flags
+USE="bluetooth pulseaudio"
+EOF
+
+### REPOSITORY SETUP - STEP 2 ###
+# Following Handbook Chapter 5 - Installing the Gentoo repository
 
 echo "▶ Setting up Gentoo repositories..."
-mkdir -p /var/db/repos/gentoo
+# Copy the Gentoo repository configuration
+cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
+
+# Sync the repository using webrsync (most reliable method per handbook)
+echo "▶ Syncing repository..."
 emerge-webrsync
 
-mkdir -p /etc/portage/package.mask
-echo "app-alternatives/awk" >> /etc/portage/package.mask/awk
-
-emerge --quiet sys-apps/gawk
+### PROFILE SELECTION - STEP 3 ###
+# Following Handbook Chapter 6 - Choosing the right profile
 
 echo "▶ Selecting profile..."
+eselect profile list
 if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
   echo "Found standard AMD64 OpenRC profile #$profile_num"
   eselect profile set "$profile_num"
@@ -434,11 +457,12 @@ else
   fi
 fi
 
-### SYSTEM CONFIGURATION ###
+### BASIC SYSTEM CONFIGURATION - STEP 4 ###
+# Following Handbook Chapter 8 - Configuring the system
 
 echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
 echo "${TZ_PLACEHOLDER}" > /etc/timezone
-emerge --config sys-libs/timezone-data --quiet
+emerge --config sys-libs/timezone-data
 
 echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
 echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
@@ -446,82 +470,31 @@ locale-gen
 eselect locale set ${LOCALE_PLACEHOLDER}
 env-update && source /etc/profile
 
-echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
-echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
-rc-update add keymaps boot
-
-if [[ "$DESKTOP_PLACEHOLDER" != "headless" ]]; then
-  mkdir -p /etc/X11/xorg.conf.d
-  cat > /etc/X11/xorg.conf.d/10-keyboard.conf <<EOF
-Section "InputClass"
-    Identifier "keyboard-all"
-    Driver "libinput"
-    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
-    MatchIsKeyboard "on"
-EOF
-
-  # Add variant if present
-  if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-    echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/10-keyboard.conf
-  fi
-  
-  echo "EndSection" >> /etc/X11/xorg.conf.d/10-keyboard.conf
-fi
-
 echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
-echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
+echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
-echo "▶ Configuring make.conf with detected hardware..."
-cat >> /etc/portage/make.conf <<EOF
-USE="bluetooth pulseaudio"
-VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
-MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
-EOF
+### KERNEL INSTALLATION - STEP 5 ###
+# Following Handbook Chapter 7 - Configuring the kernel
 
-### SYNC AND UPDATE ###
+echo "▶ Installing kernel sources..."
+emerge --quiet sys-kernel/gentoo-sources
+eselect kernel set 1
 
-echo "▶ Syncing repositories..."
-if ! emerge --sync --quiet; then
-    echo "▶ Standard sync failed, trying metadata-only sync..."
-    emerge --metadata
-    
-    if [ $? -ne 0 ]; then
-        echo "▶ Trying emaint sync as fallback..."
-        emaint sync -r gentoo
-    fi
-fi
-
-echo "▶ Checking for important Gentoo news items..."
-eselect news read all
-
-echo "▶ Updating @world set..."
-emerge -uDN @world --quiet
-
-### KERNEL INSTALLATION ###
-
-echo "▶ Installing and configuring kernel..."
 case "${KERNEL_PLACEHOLDER}" in
     genkernel)
-        echo "▶ Installing genkernel, kernel sources, and required tools..."
-        emerge --quiet sys-kernel/gentoo-sources sys-kernel/genkernel sys-apps/pciutils
-        eselect kernel set 1
+        echo "▶ Installing genkernel and required tools..."
+        emerge --quiet sys-kernel/genkernel sys-apps/pciutils
         echo "▶ Running genkernel with menuconfig..."
         genkernel --menuconfig all
         ;;
     manual_auto)
-        echo "▶ Installing kernel sources for manual-automatic build..."
-        emerge --quiet sys-kernel/gentoo-sources
-        eselect kernel set 1
-        cd /usr/src/linux
         echo "▶ Building kernel with default configuration..."
+        cd /usr/src/linux
         make defconfig
         make -j$(nproc)
         make modules_install install
         ;;
     manual)
-        echo "▶ Installing kernel sources for manual build..."
-        emerge --quiet sys-kernel/gentoo-sources
-        eselect kernel set 1
         echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
         echo "⚠ You must compile and install the kernel before rebooting"
         echo "⚠ For reference:"
@@ -532,7 +505,8 @@ case "${KERNEL_PLACEHOLDER}" in
         ;;
 esac
 
-### FIRMWARE INSTALLATION ###
+### FIRMWARE INSTALLATION - STEP 6 ###
+# Following Handbook Chapter 7 - Firmware
 
 echo "▶ Installing firmware packages..."
 # Install microcode for CPU
@@ -545,15 +519,16 @@ fi
 echo "▶ Installing system firmware..."
 emerge --quiet sys-kernel/linux-firmware
 
-### HARDWARE DETECTION ###
+### HARDWARE DETECTION AND OPTIMIZATION - STEP 6.5 ###
 
-# Laptop-specific tools
+# Laptop-specific tools and optimizations
 if [ -d /sys/class/power_supply/BAT* ]; then
     echo "▶ Laptop detected, installing power management..."
     emerge --quiet sys-power/tlp sys-power/powertop
     rc-update add tlp default
     
     # Get system information for brand detection
+    emerge --quiet sys-apps/dmidecode
     SYSTEM_VENDOR=$(dmidecode -s system-manufacturer 2>/dev/null | tr '[:lower:]' '[:upper:]')
     SYSTEM_PRODUCT=$(dmidecode -s system-product-name 2>/dev/null)
     
@@ -562,7 +537,7 @@ if [ -d /sys/class/power_supply/BAT* ]; then
         echo "▶ ThinkPad detected, installing additional tools..."
         emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
         
-        # Basic thinkfan config if it doesn't exist
+        # Basic thinkfan config
         if [ ! -f /etc/thinkfan.conf ]; then
             cat > /etc/thinkfan.conf <<THINKFAN
 tp_fan /proc/acpi/ibm/fan
@@ -640,10 +615,10 @@ elif dmesg | grep -qi "qemu\|kvm"; then
     rc-update add qemu-guest-agent default
 fi
 
-# Wi-Fi setup
+# Wi-Fi hardware detection and setup
 if lspci | grep -q -i 'network\|wireless'; then
     echo "▶ Wi-Fi hardware detected, installing drivers..."
-    emerge --quiet net-wireless/iw net-wireless/wpa_supplicant
+    emerge --quiet net-wireless/iw net-wireless/wpa_supplicant net-wireless/iwd
     
     # Intel Wi-Fi
     if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
@@ -658,172 +633,39 @@ if lspci | grep -q -i 'network\|wireless'; then
         echo "wl" >> /etc/modules-load.d/broadcom.conf
     fi
     
-    # Realtek Wi-Fi - handled by linux-firmware
-    if lspci | grep -i -E 'realtek.*wireless|rtl8' >/dev/null; then
-        echo "▶ Realtek Wi-Fi detected..."
-    fi
-    
-    # Atheros Wi-Fi - handled by linux-firmware
-    if lspci | grep -i -E 'atheros|qualcomm.*wireless' >/dev/null; then
-        echo "▶ Atheros/Qualcomm Wi-Fi detected..."
-    fi
-fi
-
-### DESKTOP ENVIRONMENT ###
-
-echo "▶ Configuring system environment: ${DESKTOP_PLACEHOLDER}"
-case "${DESKTOP_PLACEHOLDER}" in
-    xfce)
-        echo "▶ Installing XFCE desktop environment..."
-        # Install X.org server and basic drivers
-        emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
-        
-        # Install XFCE and display manager
-        emerge --quiet xfce-base/xfce4-meta x11-misc/lightdm x11-misc/lightdm-gtk-greeter
-        
-        # Install audio and common applications
-        emerge --quiet media-sound/pipewire media-video/wireplumber www-client/firefox
-        
-        # Configure keyboard in X11
-        mkdir -p /etc/X11/xorg.conf.d
-        cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<KEYBOARD
-Section "InputClass"
-    Identifier "keyboard-all"
-    Driver "libinput"
-    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
-KEYBOARD
-
-        # Add variant if specified
-        if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-            echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        fi
-        
-        echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        
-        # Enable touchpad if present
-        if [ -d /sys/class/input/mouse* ] || [ -d /sys/class/input/event* ]; then
-            cat > /etc/X11/xorg.conf.d/30-touchpad.conf <<TOUCHPAD
-Section "InputClass"
-    Identifier "touchpad"
-    Driver "libinput"
-    MatchIsTouchpad "on"
-    Option "Tapping" "on"
-    Option "NaturalScrolling" "true"
-    Option "DisableWhileTyping" "true"
-EndSection
-TOUCHPAD
-        fi
-        
-        # Enable display manager
-        rc-update add lightdm default
-        ;;
-        
-    lxqt)
-        echo "▶ Installing LXQt desktop environment..."
-        # Install X.org server and basic drivers
-        emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
-        
-        # Install LXQt and display manager
-        emerge --quiet lxqt-base/lxqt-meta lxde-base/lxdm
-        
-        # Install audio and common applications
-        emerge --quiet media-sound/pipewire media-video/wireplumber www-client/firefox
-        
-        # Configure keyboard in X11
-        mkdir -p /etc/X11/xorg.conf.d
-        cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<KEYBOARD
-Section "InputClass"
-    Identifier "keyboard-all"
-    Driver "libinput"
-    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
-KEYBOARD
-
-        # Add variant if specified
-        if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-            echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        fi
-        
-        echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-        
-        # Enable touchpad if present
-        if [ -d /sys/class/input/mouse* ] || [ -d /sys/class/input/event* ]; then
-            cat > /etc/X11/xorg.conf.d/30-touchpad.conf <<TOUCHPAD
-Section "InputClass"
-    Identifier "touchpad"
-    Driver "libinput"
-    MatchIsTouchpad "on"
-    Option "Tapping" "on"
-    Option "NaturalScrolling" "true"
-    Option "DisableWhileTyping" "true"
-EndSection
-TOUCHPAD
-        fi
-        
-        # Enable display manager
-        rc-update add lxdm default
-        ;;
-        
-    headless|*)
-        echo "▶ Setting up headless server configuration..."
-        emerge --quiet net-misc/openssh app-admin/sudo
-        rc-update add sshd default
-        ;;
-esac
-
-### NETWORK CONFIGURATION ###
-
-echo "▶ Setting up network management..."
-emerge --quiet net-misc/networkmanager net-misc/dhcpcd
-
-rc-update add NetworkManager default
-
-# Create a default NetworkManager connection config directory with proper permissions
-mkdir -p /etc/NetworkManager/system-connections
-chmod 700 /etc/NetworkManager/system-connections
-
-# Configure NetworkManager to use dhcpcd
-mkdir -p /etc/NetworkManager/conf.d/
-echo "[main]
-dhcp=dhcpcd" > /etc/NetworkManager/conf.d/dhclient.conf
-
-# For Wi-Fi management
-emerge --quiet net-wireless/iwd
-if lspci | grep -q -i 'network\|wireless'; then
-    echo "▶ Ensuring NetworkManager can manage Wi-Fi connections..."
+    # Configure NetworkManager to use iwd for Wi-Fi
     mkdir -p /etc/NetworkManager/conf.d/
     echo "[device]
 wifi.backend=iwd" > /etc/NetworkManager/conf.d/wifi_backend.conf
 fi
 
-### USER ACCOUNTS ###
+### SYSTEM TOOLS - STEP 7 ###
+# Following Handbook Chapter 8 - System tools
 
-echo "▶ Setting up user accounts..."
-# Set root password
-echo "root:${ROOT_HASH}" | chpasswd -e
+echo "▶ Installing essential system tools..."
+emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
+rc-update add sysklogd default
 
-# Create regular user
-useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
-echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
+# Configure keyboard in console
+echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
+echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
+rc-update add keymaps boot
 
-# Configure sudo access
-mkdir -p /etc/sudoers.d
-echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
-chmod 440 /etc/sudoers.d/wheel
+# For network management
+echo "▶ Installing NetworkManager..."
+emerge --quiet net-misc/networkmanager
+rc-update add NetworkManager default
 
-### FILESYSTEM CONFIGURATION ###
+# Create a default NetworkManager connection config directory
+mkdir -p /etc/NetworkManager/system-connections
+chmod 700 /etc/NetworkManager/system-connections
 
-echo "▶ Configuring filesystem..."
-# Set up fstab
-cat > /etc/fstab <<FSTAB
-# <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
-LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
-PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
-UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
-FSTAB
+# Install and enable SSH
+emerge --quiet net-misc/openssh
+rc-update add sshd default
 
-### BOOTLOADER INSTALLATION ###
+### BOOTLOADER INSTALLATION - STEP 8 ###
+# Following Handbook Chapter 10 - Configuring the bootloader
 
 echo "▶ Installing and configuring bootloader..."
 emerge --quiet sys-boot/grub:2
@@ -844,20 +686,86 @@ echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
 echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
 
-### FINAL CLEANUP ###
+### FILESYSTEM CONFIGURATION - STEP 9 ###
+# Following Handbook Chapter 8 - Filesystem
+
+echo "▶ Configuring filesystem..."
+# Set up fstab
+cat > /etc/fstab <<FSTAB
+# <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
+LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
+PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
+UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
+FSTAB
+
+### USER ACCOUNTS - STEP 10 ###
+# Following Handbook Chapter 11 - User administration
+
+echo "▶ Setting up user accounts..."
+# Set root password
+echo "root:${ROOT_HASH}" | chpasswd -e
+
+# Create regular user
+useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
+echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
+
+# Configure sudo access
+mkdir -p /etc/sudoers.d
+echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
+
+### DESKTOP ENVIRONMENT (if selected) - STEP 11 ###
+# Only after core system is set up
+
+if [[ "${DESKTOP_PLACEHOLDER}" != "headless" ]]; then
+    echo "▶ Installing X.Org Server..."
+    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
+    
+    # Configure keyboard in X11
+    mkdir -p /etc/X11/xorg.conf.d
+    cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "keyboard-all"
+    Driver "libinput"
+    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
+EOF
+
+    # Add variant if present
+    if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
+        echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+    fi
+    
+    echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+    echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+    
+    # Audio
+    emerge --quiet media-sound/pipewire media-video/wireplumber
+    
+    # Desktop Environment
+    case "${DESKTOP_PLACEHOLDER}" in
+        xfce)
+            echo "▶ Installing XFCE desktop environment..."
+            emerge --quiet xfce-base/xfce4-meta x11-misc/lightdm x11-misc/lightdm-gtk-greeter
+            rc-update add lightdm default
+            ;;
+        lxqt)
+            echo "▶ Installing LXQt desktop environment..."
+            emerge --quiet lxqt-base/lxqt-meta lxde-base/lxdm
+            rc-update add lxdm default
+            ;;
+    esac
+    
+    # Common applications
+    # emerge --quiet www-client/firefox
+fi
+
+### FINAL TOUCHES - STEP 12 ###
+
+echo "▶ Checking for important Gentoo news items..."
+eselect news read new
 
 echo "▶ Performing final cleanup..."
 emerge --depclean --quiet
-
-### POST-INSTALLATION NOTES ###
-
-echo "▶ Important notes for after first boot:"
-echo "  • Network is configured using NetworkManager"
-echo "  • Use 'nmtui' for a text-based network configuration interface"
-echo "  • Use 'nmcli con show' to list available connections"
-echo "  • Use 'nmcli dev wifi list' to scan for wireless networks"
-echo "  • Use 'nmcli dev wifi connect SSID password PASSWORD' to connect to a wireless network"
-echo "  • For more advanced configuration, edit files in /etc/NetworkManager/system-connections/"
 
 echo "🎉 Installation completed successfully!"
 echo "🔄 You can now reboot into your new Gentoo system."
