@@ -408,30 +408,23 @@ echo "▶ Starting Gentoo installation inside chroot environment..."
 
 ### REPOSITORY SETUP ###
 
-export FEATURES="-collision-protect -protect-owned -collision-detect -strict -binpkg-ignore-signature"
-
 echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
 emerge-webrsync
 
-# Initialize portage
 echo "▶ Selecting profile..."
 if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-    echo "  Found default AMD64 OpenRC profile #$profile_num"
-    eselect profile set "$profile_num"
+  echo "Found standard AMD64 OpenRC profile #$profile_num"
+  eselect profile set "$profile_num"
 else
-    echo "  No standard AMD64 OpenRC profile found. Using first available AMD64 profile."
-    eselect profile list | grep -i "amd64" | head -1
-    profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+')
+  if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+    echo "Found AMD64 profile #$profile_num"
     eselect profile set "$profile_num"
+  else
+    echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
+    eselect profile list
+  fi
 fi
-
-# Handle package alternatives to prevent common conflicts
-echo "▶ Configuring package alternatives..."
-mkdir -p /etc/portage/package.use
-echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
-echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
-echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
 
 ### SYSTEM CONFIGURATION ###
 
@@ -442,38 +435,40 @@ emerge --config sys-libs/timezone-data --quiet
 echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
 echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
 locale-gen
-eselect locale set "${LOCALE_PLACEHOLDER}"
+eselect locale set ${LOCALE_PLACEHOLDER}
 env-update && source /etc/profile
 
 echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
 echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
 rc-update add keymaps boot
 
-echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
-echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
-
-# Configure make.conf with detected hardware
-echo "▶ Configuring make.conf with detected hardware..."
-cat >> /etc/portage/make.conf <<EOF
-# Hardware-specific USE flags
-USE="bluetooth pulseaudio"
-
-VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
-
-MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
+if [[ "$DESKTOP_PLACEHOLDER" != "headless" ]]; then
+  mkdir -p /etc/X11/xorg.conf.d
+  cat > /etc/X11/xorg.conf.d/10-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "keyboard-all"
+    Driver "libinput"
+    Option "XkbLayout" "${KEYBOARD_LAYOUT_PLACEHOLDER}"
+    MatchIsKeyboard "on"
 EOF
 
-mkdir -p /etc/portage/package.use
-echo "media-libs/mesa -vaapi" > /etc/portage/package.use/mesa
+  # Add variant if present
+  if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
+    echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/10-keyboard.conf
+  fi
+  
+  echo "EndSection" >> /etc/X11/xorg.conf.d/10-keyboard.conf
+fi
 
-# Setup package licenses
-mkdir -p /etc/portage/package.license
-echo "sys-kernel/linux-firmware linux-fw-redistributable no-source-code" > /etc/portage/package.license/firmware
-echo "sys-firmware/intel-microcode intel-ucode" >> /etc/portage/package.license/firmware
+echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
+echo "HOSTNAME=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
-# For potentially unstable packages
-mkdir -p /etc/portage/package.accept_keywords
-echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+echo "▶ Configuring make.conf with detected hardware..."
+cat >> /etc/portage/make.conf <<EOF
+USE="bluetooth pulseaudio"
+VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
+MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
+EOF
 
 ### SYNC AND UPDATE ###
 
