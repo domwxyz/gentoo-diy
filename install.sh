@@ -449,15 +449,20 @@ cat >> /etc/portage/make.conf <<EOF
 # Hardware-specific USE flags
 USE="acpi bluetooth dbus pulseaudio udev"
 
-# Video hardware support
 VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 
-# Build options
 MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 EOF
 
 mkdir -p /etc/portage/package.use
 echo "media-libs/mesa -vaapi" > /etc/portage/package.use/mesa
+
+# Handle package alternatives to prevent common conflicts
+echo "▶ Configuring package alternatives..."
+mkdir -p /etc/portage/package.use
+echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
+echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
+echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
 
 # Setup package licenses
 mkdir -p /etc/portage/package.license
@@ -480,6 +485,9 @@ if ! emerge --sync --quiet; then
         emaint sync -r gentoo
     fi
 fi
+
+echo "▶ Checking for important Gentoo news items..."
+eselect news read all
 
 echo "▶ Updating @world set..."
 emerge -uDN @world --quiet
