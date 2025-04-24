@@ -378,6 +378,8 @@ cat > /mnt/gentoo/root/inside.sh <<'EOS'
 set -euo pipefail
 source /etc/profile
 
+export FEATURES="-collision-protect -protect-owned"
+
 mkdir -p /etc/portage/package.license
 echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
 mkdir -p /etc/portage/package.accept_keywords
