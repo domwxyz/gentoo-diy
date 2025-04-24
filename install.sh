@@ -424,6 +424,17 @@ else
     eselect profile set "$profile_num"
 fi
 
+echo "▶ Explicitly setting up awk alternative..."
+emerge --oneshot --quiet app-alternatives/awk
+eselect awk set gawk
+
+# Handle package alternatives to prevent common conflicts
+echo "▶ Configuring package alternatives..."
+mkdir -p /etc/portage/package.use
+echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
+echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
+echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
+
 ### SYSTEM CONFIGURATION ###
 
 echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
@@ -456,13 +467,6 @@ EOF
 
 mkdir -p /etc/portage/package.use
 echo "media-libs/mesa -vaapi" > /etc/portage/package.use/mesa
-
-# Handle package alternatives to prevent common conflicts
-echo "▶ Configuring package alternatives..."
-mkdir -p /etc/portage/package.use
-echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
-echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
-echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
 
 # Setup package licenses
 mkdir -p /etc/portage/package.license
