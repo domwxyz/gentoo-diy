@@ -408,6 +408,8 @@ echo "▶ Starting Gentoo installation inside chroot environment..."
 
 ### REPOSITORY SETUP ###
 
+export FEATURES="-collision-protect"
+
 echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
 emerge-webrsync
@@ -424,9 +426,8 @@ else
     eselect profile set "$profile_num"
 fi
 
-echo "▶ Explicitly setting up awk alternative..."
-emerge --oneshot --quiet app-alternatives/awk
-eselect awk set gawk
+emerge --deselect app-eselect/eselect-awk
+emerge --depclean app-eselect/eselect-awk
 
 # Handle package alternatives to prevent common conflicts
 echo "▶ Configuring package alternatives..."
@@ -434,6 +435,7 @@ mkdir -p /etc/portage/package.use
 echo "app-alternatives/awk gawk" > /etc/portage/package.use/alternatives
 echo "app-alternatives/yacc bison" >> /etc/portage/package.use/alternatives
 echo "app-alternatives/lex flex" >> /etc/portage/package.use/alternatives
+emerge --oneshot app-alternatives/awk
 
 ### SYSTEM CONFIGURATION ###
 
