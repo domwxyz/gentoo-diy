@@ -408,7 +408,7 @@ echo "▶ Starting Gentoo installation inside chroot environment..."
 
 ### REPOSITORY SETUP ###
 
-export FEATURES="-collision-protect -protect-owned"
+export FEATURES="-collision-protect -protect-owned -collision-detect -strict -binpkg-ignore-signature"
 
 echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
@@ -456,7 +456,7 @@ echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 echo "▶ Configuring make.conf with detected hardware..."
 cat >> /etc/portage/make.conf <<EOF
 # Hardware-specific USE flags
-USE="acpi bluetooth dbus pulseaudio udev"
+USE="bluetooth pulseaudio"
 
 VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 
