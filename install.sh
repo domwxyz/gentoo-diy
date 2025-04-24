@@ -408,7 +408,7 @@ echo "▶ Starting Gentoo installation inside chroot environment..."
 
 ### REPOSITORY SETUP ###
 
-export FEATURES="-collision-protect"
+export FEATURES="-collision-protect -protect-owned"
 
 echo "▶ Setting up Gentoo repositories..."
 mkdir -p /var/db/repos/gentoo
