@@ -478,7 +478,7 @@ echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/f
 echo "▶ Syncing repositories..."
 if ! emerge --sync --quiet; then
     echo "▶ Standard sync failed, trying metadata-only sync..."
-    emerge --sync --metadata
+    emerge --metadata
     
     if [ $? -ne 0 ]; then
         echo "▶ Trying emaint sync as fallback..."
