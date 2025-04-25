@@ -203,17 +203,12 @@ select_timezone() {
 }
 
 ########################  gather generic answers  #####################
+select_locale
+select_timezone
 ask HOSTNAME "Hostname"                 "gentoobox"
 ask_pw ROOT_PASS "Root password"
-select_timezone
-select_locale
 ask USERNAME "Regular user name"        "user"
 ask_pw USER_PASS "Password for $USERNAME"
-
-########################  swap size (GiB)  ############################
-RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
-def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
-ask SWAPSIZE "Swap size in GiB" "$def_swap"
 
 ########################  detect CPU / microcode  #####################
 CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
@@ -223,6 +218,9 @@ case "$CPU_VENDOR" in
   *)            MCPKG="" ;;
 esac
 ask MCPKG "Detected $CPU_VENDOR CPU. Microcode pkg" "$MCPKG"
+
+########################  kernel choices  ###################
+ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
 
 ########################  detect GPU / VIDEO_CARDS ####################
 ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
@@ -242,12 +240,10 @@ fi
 
 ask VC "Detected GPU ($GPU_LINE). VIDEO_CARDS string" "$VC"
 
-########################  kernel choices  ###################
-ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
-
-########################  filesystem choice  ##########################
-ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"
-[[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
+########################  swap size (GiB)  ############################
+RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
+def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
+ask SWAPSIZE "Swap size in GiB" "$def_swap"
 
 ########################  firmware type  ################################
 if [[ -d /sys/firmware/efi ]]; then
@@ -257,6 +253,10 @@ else
   UEFI="no"
   log "Legacy BIOS detected."
 fi
+
+########################  filesystem choice  ##########################
+ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"
+[[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
 
 ########################  detect disks  ###############################
 log "Detecting installable disks …"
@@ -491,6 +491,7 @@ fi
 mkdir -p /etc/portage/package.use
 echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
 echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
+echo "app-text/xmlto text" > /etc/portage/package.use/xmlto
 
 ### REPOSITORY SETUP - STEP 2 ###
 # Following Handbook Chapter 5 - Installing the Gentoo repository
@@ -725,6 +726,10 @@ chmod 700 /etc/NetworkManager/system-connections
 emerge --quiet net-misc/openssh
 rc-update add sshd default
 
+# Simple firewall config
+emerge --quiet net-firewall/ufw
+rc-update add ufw default
+
 ### BOOTLOADER INSTALLATION - STEP 8 ###
 # Following Handbook Chapter 10 - Configuring the bootloader
 
@@ -828,8 +833,15 @@ EOF
             ;;
     esac
     
+    # Basic terminal fallback
+    emerge --quiet x11-terms/xterm
+
+    # Text editor
+    emerge --quiet app-editors/nano
+
     # Common applications
     # emerge --quiet www-client/firefox
+
 fi
 
 ### FINAL TOUCHES - STEP 12 ###
