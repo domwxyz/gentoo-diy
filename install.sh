@@ -140,30 +140,6 @@ if ! ping -c1 -W2 1.1.1.1 &>/dev/null; then
 fi
 log "Network OK."
 
-########################  detect disks  ###############################
-log "Detecting installable disks …"
-mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE -P | grep -E 'NAME="/dev/(sd|nvme|vd)')
-[[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
-
-echo "Available disks:"
-for i in "${!DISKS[@]}"; do
-  echo "$((i+1)). ${DISKS[$i]}"
-done
-
-while true; do
-  read -rp "Enter disk number: " choice
-  if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
-    disk_line="${DISKS[$((choice-1))]}"
-    DISK=$(echo "$disk_line" | grep -o 'NAME="[^"]*"' | cut -d'"' -f2)
-    echo "Selected disk: $DISK"
-    break
-  else
-    echo "Invalid selection. Please enter a number between 1 and ${#DISKS[@]}."
-  fi
-done
-
-[[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
-
 ########################  locale/timezone selection  ###########################
 select_locale() {
   local locales=(
@@ -282,7 +258,47 @@ else
   log "Legacy BIOS detected."
 fi
 
+########################  detect disks  ###############################
+log "Detecting installable disks …"
+mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE -P | grep -E 'NAME="/dev/(sd|nvme|vd)')
+[[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
+
+echo "Available disks:"
+for i in "${!DISKS[@]}"; do
+  echo "$((i+1)). ${DISKS[$i]}"
+done
+
+while true; do
+  read -rp "Enter disk number: " choice
+  if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
+    disk_line="${DISKS[$((choice-1))]}"
+    DISK=$(echo "$disk_line" | grep -o 'NAME="[^"]*"' | cut -d'"' -f2)
+    echo "Selected disk: $DISK"
+    break
+  else
+    echo "Invalid selection. Please enter a number between 1 and ${#DISKS[@]}."
+  fi
+done
+
+[[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
+
 ########################  partition  ##################################
+
+log "Ready to partition ${DISK}"
+echo "WARNING: This will ERASE ALL DATA on ${DISK}"
+echo "         Size: $(lsblk -dn -o SIZE "${DISK}")"
+echo "         Model: $(lsblk -dn -o MODEL "${DISK}" 2>/dev/null || echo "unknown")"
+
+# Confirmation prompt with explicit warning
+while true; do
+    read -rp "Proceed with erasing all data on this disk? (yes/no): " disk_confirm
+    case $disk_confirm in
+        yes) break ;;
+        no) die "Installation aborted by user" ;;
+        *) echo "Please type 'yes' or 'no'" ;;
+    esac
+done
+
 log "Partitioning $DISK …"
 if [[ $UEFI == yes ]]; then
   sgdisk --zap-all "$DISK"
@@ -339,7 +355,11 @@ else
   mkfs.btrfs -L gentoo "$ROOT"
 fi
 
-ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
+if [[ $UEFI == yes ]]; then
+  ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
+else
+  ESP_UUID=""  # Empty for non-UEFI systems
+fi
 SWP_UUID="$(blkid -s UUID      -o value "$SWP")"
 
 mount "$ROOT" /mnt/gentoo
@@ -364,6 +384,38 @@ STAGE=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd
 log "Downloading latest stage3: ${STAGE}"
 wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
      "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE}"
+
+if command -v gpg &>/dev/null; then
+    ask VERIFY_STAGE3 "Verify stage3 tarball integrity? (y/n)" "n"
+    if [[ $VERIFY_STAGE3 == [Yy]* ]]; then
+        log "Verifying stage3 tarball integrity..."
+        
+        # Extract directory path from the stage3 path
+        STAGE_DIR=$(dirname "${STAGE}")
+        STAGE_FILE=$(basename "${STAGE}")
+        
+        # Download the DIGESTS file
+        wget -q --show-progress -O /mnt/gentoo/DIGESTS \
+             "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE_DIR}/DIGESTS"
+        
+        # Simple checksum verification
+        log "Verifying stage3 checksum..."
+        SHA512_EXPECTED=$(grep -A1 -E "${STAGE_FILE}" /mnt/gentoo/DIGESTS | grep -E "SHA512" | head -n1 | awk '{print $1}')
+        SHA512_ACTUAL=$(sha512sum /mnt/gentoo/stage3.tar.xz | awk '{print $1}')
+        
+        if [[ "$SHA512_EXPECTED" == "$SHA512_ACTUAL" ]]; then
+            log "✅ Stage3 tarball checksum verified"
+        else
+            warn "❌ Checksum verification failed!"
+            read -rp "Continue anyway? (y/n): " checksum_continue
+            [[ $checksum_continue != [Yy]* ]] && die "Installation aborted due to checksum mismatch"
+        fi
+    else
+        log "Skipping stage3 verification"
+    fi
+else
+    log "GPG not available - skipping stage3 verification"
+fi
 
 tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
     --xattrs-include='*.*' --numeric-owner
@@ -606,9 +658,6 @@ if dmesg | grep -qi "virtualbox"; then
     echo "▶ VirtualBox detected, installing guest additions..."
     emerge --quiet app-emulation/virtualbox-guest-additions
     rc-update add virtualbox-guest-additions default
-    
-    # Add user to the vboxguest group
-    usermod -aG vboxguest "${USER_PLACEHOLDER}"
 elif dmesg | grep -qi "qemu\|kvm"; then
     echo "▶ QEMU/KVM virtual machine detected, installing guest tools..."
     emerge --quiet app-emulation/qemu-guest-agent
@@ -691,12 +740,20 @@ grub-mkconfig -o /boot/grub/grub.cfg
 
 echo "▶ Configuring filesystem..."
 # Set up fstab
-cat > /etc/fstab <<FSTAB
+if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+  cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
+else
+  cat > /etc/fstab <<FSTAB
+# <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
+LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
+UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
+FSTAB
+fi
 
 ### USER ACCOUNTS - STEP 10 ###
 # Following Handbook Chapter 11 - User administration
@@ -713,6 +770,10 @@ echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
 mkdir -p /etc/sudoers.d
 echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
 chmod 440 /etc/sudoers.d/wheel
+
+if dmesg | grep -qi "virtualbox"; then
+    usermod -aG vboxguest "${USER_PLACEHOLDER}"
+fi
 
 ### DESKTOP ENVIRONMENT (if selected) - STEP 11 ###
 # Only after core system is set up
