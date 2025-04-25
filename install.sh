@@ -476,9 +476,21 @@ MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 # Hardware-specific settings
 VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 
-# Use flags
-USE="bluetooth pulseaudio"
+# Base USE flags
+USE="dbus udev ssl unicode usb -systemd"
 EOF
+
+if [[ "${DESKTOP_PLACEHOLDER}" != "headless" ]]; then
+  cat >> /etc/portage/make.conf <<EOF
+# Desktop environment USE flags
+USE="\${USE} X elogind acpi alsa bluetooth cups policykit pulseaudio wifi"
+EOF
+fi
+
+# Add package-specific USE flags
+mkdir -p /etc/portage/package.use
+echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
+echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
 
 ### REPOSITORY SETUP - STEP 2 ###
 # Following Handbook Chapter 5 - Installing the Gentoo repository
