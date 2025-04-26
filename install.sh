@@ -483,7 +483,7 @@ EOF
 if [[ "${DESKTOP_PLACEHOLDER}" != "headless" ]]; then
   cat >> /etc/portage/make.conf <<EOF
 # Desktop environment USE flags
-USE="\${USE} X elogind acpi alsa bluetooth cups policykit pulseaudio wifi"
+USE="\${USE} X elogind acpi alsa bluetooth cups policykit pipewire pipewire-alsa wifi"
 EOF
 fi
 
@@ -817,7 +817,7 @@ EOF
     echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     
     # Audio
-    emerge --quiet media-sound/pipewire media-video/wireplumber
+    emerge --quiet media-video/pipewire media-video/wireplumber
     
     # Desktop Environment
     case "${DESKTOP_PLACEHOLDER}" in
