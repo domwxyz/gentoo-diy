@@ -1,4 +1,4 @@
-# Gentoo Guru - One-Curl Gentoo Installer
+# Gentoo dot DIY - One-Curl Gentoo Installer
 
 A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems. **This is not an official Gentoo project.**
 
@@ -10,15 +10,14 @@ A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems. **This is n
 - **Kernel flexibility**: genkernel, manual, or unattended build
 - **Filesystem choice**: Ext4 or Btrfs
 - **Network support**: Automatic Wi-Fi fallback
+- **Hardware-specific optimizations** for ThinkPad, Dell, and HP laptops
+- **Virtualization support** for VirtualBox and QEMU/KVM environments
+- **Security** with UFW firewall enabled by default
 
 ## Quick Install
 
 ```bash
-curl -L https://gentoo.guru/install.sh | bash
-
-or 
-
-curl -L https://gentoo.guru/install.sh -o install.sh
+curl -L https://gentoo.diy/install.sh -o install.sh
 chmod +x install.sh
 ./install.sh
 ```
@@ -44,6 +43,13 @@ chmod +x install.sh
 - **Boot Media**: Gentoo LiveCD/USB with working internet access
 - **Internet**: Wired connection recommended; Wi-Fi supported with fallback setup
 - **Graphics**: Compatible GPU for desktop environments (Intel, AMD, or NVIDIA)
+
+## Included Software
+
+- **Networking**: NetworkManager with iwd for Wi-Fi management
+- **Power Management**: TLP and powertop for laptops
+- **Security**: UFW firewall, sudo configuration
+- **System**: OpenSSH server, sysklogd
 
 ## Options
 
@@ -90,15 +96,20 @@ If you selected manual kernel configuration, follow these steps after installati
 - Remove installation media and reboot
 - If you chose manual kernel, compile it before rebooting
 - Use NetworkManager (`nmtui` or `nmcli`) for network setup
+- Laptop users: Power management is pre-configured for optimal battery life
+- System security: UFW firewall is enabled by default
+- Wi-Fi users: Special drivers are auto-installed for Intel and Broadcom chipsets
 
 Happy Gentoo! For more information about Gentoo Linux, visit the [official Gentoo website](https://www.gentoo.org/).
 
 ## Troubleshooting
 
-- **No network**: Use NetworkManager tools to configure
+- **No network**: Use NetworkManager tools to configure (`nmtui` or `nmcli`)
 - **Display issues**: Boot to text mode to reconfigure graphics
 - **Boot failures**: Chroot from LiveCD to repair
 - **Missing firmware/drivers**: If hardware isn't working, you may need additional firmware packages: `emerge --ask sys-kernel/linux-firmware`
+- **Power management**: For laptops, check TLP status with `tlp-stat`
+- **Virtualization issues**: Guest additions are automatically installed for VirtualBox/QEMU
 
 ## License
 
