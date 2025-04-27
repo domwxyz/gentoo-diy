@@ -24,37 +24,39 @@ warn() { printf "${ylw}⚠ %s${nc}\n"  "$*"; }
 die()  { printf "${red}❌ %s${nc}\n" "$*"; exit 1; }
 
 welcome_banner() {
-  local width=59
+  local width=60  # Width of the content area (excluding asterisks)
   local title="G E N T O O   D O T   D I Y"
   local subtitle="One-Curl Gentoo Installer Wizard"
   local loading_msg="Auto-detecting hardware for optimal install..."
   
-  center_text() {
+  local border_line=$(printf '%*s' "$((width + 4))" '' | tr ' ' '*')
+  
+  print_centered_line() {
     local text="$1"
-    local color="${2:-}"
-    local text_length="${#text}"
-    local pad_total=$((width - text_length - 4))
-    local pad_left=$((pad_total / 2))
-    local pad_right=$((pad_total - pad_left))
-
-    printf "* %${pad_left}s${color}%s${nc}%${pad_right}s *\n" "" "$text" ""
+    local color="${2:-$nc}"
+    local text_length=${#text}
+    local padding=$(( (width - text_length) / 2 ))
+    local left_pad=$(printf '%*s' "$padding" '')
+    local right_pad=$(printf '%*s' "$((width - text_length - padding))" '')
+    
+    printf "**%s${color}%s${nc}%s**\n" "$left_pad" "$text" "$right_pad"
   }
   
   # Print the banner with pauses
   clear
   echo
   sleep 0.3
-  printf "%$(($width + 4))s\n" "" | tr ' ' '*'
+  echo "$border_line"
   sleep 0.1
-  center_text ""
+  print_centered_line ""
   sleep 0.1
-  center_text "$title" "${grn}"
+  print_centered_line "$title" "${grn}"
   sleep 0.1
-  center_text "$subtitle" "${grn}"
+  print_centered_line "$subtitle" "${grn}"
   sleep 0.1
-  center_text ""
+  print_centered_line ""
   sleep 0.1
-  printf "%$(($width + 4))s\n" "" | tr ' ' '*'
+  echo "$border_line"
   sleep 0.5
   echo
   printf "   %s\n" "$loading_msg"
@@ -97,7 +99,6 @@ exec < /dev/tty
 ########################  welcome  ####################################
 
 welcome_banner
-echo # Blank line for spacing
 log "Starting Gentoo dot DIY installer..."
 
 ########################  sync clock  #################################
