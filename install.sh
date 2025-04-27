@@ -251,6 +251,7 @@ select_timezone() {
 
 ########################  gather generic answers  #####################
 select_locale
+echo # Blank line for spacing
 select_timezone
 echo # Blank line for spacing
 ask HOSTNAME "Hostname"                 "gentoobox"
@@ -267,10 +268,6 @@ case "$CPU_VENDOR" in
   AuthenticAMD) MCPKG="sys-kernel/linux-firmware"   ;;
   *)            MCPKG="" ;;
 esac
-ask MCPKG "Detected $CPU_VENDOR CPU. Microcode pkg" "$MCPKG"
-
-########################  kernel choices  ###################
-ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
 
 ########################  detect GPU / VIDEO_CARDS ####################
 ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
@@ -287,6 +284,11 @@ if [[ $DESKTOP == 3 ]]; then
   VC=""
   log "Headless server selected - VIDEO_CARDS set to empty"
 fi
+
+echo # Blank line for spacing
+
+########################  kernel choices  ###################
+ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
 
 ########################  swap size (GiB)  ############################
 RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
