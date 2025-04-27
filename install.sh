@@ -362,12 +362,6 @@ else
   parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
 fi
 
-log "Disk partitioning and formatting complete:"
-[[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
-printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
-printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
-echo # Blank line for separation
-
 log "Ensuring partitions are recognized..."
 partprobe "$DISK"
 sleep 3
@@ -402,6 +396,12 @@ if [[ $UEFI != yes ]]; then
   SWP="${DISK}${P}1"
   ROOT="${DISK}${P}2"
 fi
+
+log "Disk partitioning and formatting complete:"
+[[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
+echo # Blank line for separation
 
 [[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
 
