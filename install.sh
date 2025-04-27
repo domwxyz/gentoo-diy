@@ -31,13 +31,14 @@ welcome_banner() {
   
   center_text() {
     local text="$1"
-    local color="${2:-}"
-    local text_length="${#text}"
-    local pad_total=$((width - text_length - 2))  # -2 for the border chars
+    local color="${2:-${nc}}"
+    local colored_text="${color}${text}${nc}"
+    local text_visual_length=${#text}
+    local pad_total=$((width - text_visual_length - 2))
     local pad_left=$((pad_total / 2))
     local pad_right=$((pad_total - pad_left))
-    
-    printf "${grn}│${nc}%${pad_left}s${color}%s${nc}%${pad_right}s${grn}│${nc}\n" "" "$text" ""
+
+    printf "${grn}│%${pad_left}s%s%${pad_right}s│${nc}\n" "" "${colored_text}" ""
   }
   
   # Print the banner with pauses
@@ -281,8 +282,6 @@ if [[ $DESKTOP == 3 ]]; then
   VC=""
   log "Headless server selected - VIDEO_CARDS set to empty"
 fi
-
-ask VC "Detected GPU ($GPU_LINE). VIDEO_CARDS string" "$VC"
 
 ########################  swap size (GiB)  ############################
 RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
