@@ -24,38 +24,37 @@ warn() { printf "${ylw}⚠ %s${nc}\n"  "$*"; }
 die()  { printf "${red}❌ %s${nc}\n" "$*"; exit 1; }
 
 welcome_banner() {
-  local width=55
+  local width=59
   local title="G E N T O O   D O T   D I Y"
   local subtitle="One-Curl Gentoo Installer Wizard"
   local loading_msg="Auto-detecting hardware for optimal install..."
   
   center_text() {
     local text="$1"
-    local color="${2:-${nc}}"
-    local colored_text="${color}${text}${nc}"
-    local text_visual_length=${#text}
-    local pad_total=$((width - text_visual_length - 2))
+    local color="${2:-}"
+    local text_length="${#text}"
+    local pad_total=$((width - text_length - 4))
     local pad_left=$((pad_total / 2))
     local pad_right=$((pad_total - pad_left))
 
-    printf "${grn}│%${pad_left}s%s%${pad_right}s│${nc}\n" "" "${colored_text}" ""
+    printf "* %${pad_left}s${color}%s${nc}%${pad_right}s *\n" "" "$text" ""
   }
   
   # Print the banner with pauses
   clear
   echo
   sleep 0.3
-  printf "${grn}┌%${width}s┐${nc}\n" "" | tr ' ' '─'
+  printf "%$(($width + 4))s\n" "" | tr ' ' '*'
   sleep 0.1
-  printf "${grn}│%${width}s│${nc}\n" ""
+  center_text ""
   sleep 0.1
   center_text "$title" "${grn}"
   sleep 0.1
   center_text "$subtitle" "${grn}"
   sleep 0.1
-  printf "${grn}│%${width}s│${nc}\n" ""
+  center_text ""
   sleep 0.1
-  printf "${grn}└%${width}s┘${nc}\n" "" | tr ' ' '─'
+  printf "%$(($width + 4))s\n" "" | tr ' ' '*'
   sleep 0.5
   echo
   printf "   %s\n" "$loading_msg"
@@ -65,7 +64,7 @@ welcome_banner() {
 
 ########################  helpers  ####################################
 need() { command -v "$1" &>/dev/null || die "Missing tool: $1"; }
-ask() {                         # ask VAR "Prompt" "default"
+ask() { # ask VAR "Prompt" "default"
   local var="$1" msg="$2" def="${3-}" val
   read -rp "${msg}${def:+ [${def}]}: " val
   printf -v "$var" '%s' "${val:-$def}"
