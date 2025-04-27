@@ -98,6 +98,7 @@ exec < /dev/tty
 ########################  welcome  ####################################
 
 welcome_banner
+echo # Blank line for spacing
 log "Starting Gentoo dot DIY installer..."
 
 ########################  sync clock  #################################
@@ -184,6 +185,7 @@ if ! ping -c1 -W2 1.1.1.1 &>/dev/null; then
   ping -c1 -W4 1.1.1.1 || die "Still offline after Wi-Fi attempt."
 fi
 log "Network OK."
+echo # Blank line for spacing
 
 ########################  locale/timezone selection  ###########################
 select_locale() {
@@ -250,10 +252,13 @@ select_timezone() {
 ########################  gather generic answers  #####################
 select_locale
 select_timezone
+echo # Blank line for spacing
 ask HOSTNAME "Hostname"                 "gentoobox"
 ask_pw ROOT_PASS "Root password"
+echo # Blank line for spacing
 ask USERNAME "Regular user name"        "user"
 ask_pw USER_PASS "Password for $USERNAME"
+echo # Blank line for spacing
 
 ########################  detect CPU / microcode  #####################
 CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
@@ -302,6 +307,7 @@ ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"
 [[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
 
 ########################  detect disks  ###############################
+echo # Blank line for spacing
 log "Detecting installable disks …"
 mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE -P | grep -E 'NAME="/dev/(sd|nvme|vd)')
 [[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
@@ -353,6 +359,12 @@ else
   parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
   parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
 fi
+
+log "Disk partitioning and formatting complete:"
+[[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
+echo # Blank line for separation
 
 log "Ensuring partitions are recognized..."
 partprobe "$DISK"
