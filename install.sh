@@ -2,7 +2,6 @@
 # =====================================================================
 #  Gentoo “one‑curl” installer
 #  Built for business class Intel/AMD64 laptops.
-#  • Desktop: XFCE/LightDM  |  LXQt/LXDM |  Headless
 #  • Kernel : genkernel  |  manual‑interactive  |  unattended‑manual
 #  • UEFI *or* legacy BIOS automatically detected
 #  • Auto‑detect: disks, CPU vendor (microcode), GPU (VIDEO_CARDS)
@@ -270,7 +269,7 @@ case "$CPU_VENDOR" in
 esac
 
 ########################  detect GPU / VIDEO_CARDS ####################
-ask DESKTOP "Desktop:      [1] XFCE + LightDM       [2] LXQt + LXDM       [3] Headless (no Desktop)" "3"
+ask X_SERVER "Install minimal X server support? (y/n)" "n"
 
 GPU_LINE=$(lspci -nnk | grep -Ei 'VGA|3D')
 case "$GPU_LINE" in
@@ -280,9 +279,9 @@ case "$GPU_LINE" in
   *) VC="" ;;
 esac
 
-if [[ $DESKTOP == 3 ]]; then
+if [[ $X_SERVER != [Yy]* ]]; then
   VC=""
-  log "Headless server selected - VIDEO_CARDS set to empty"
+  log "X server not selected - VIDEO_CARDS set to empty"
 fi
 
 echo # Blank line for spacing
@@ -500,7 +499,7 @@ MICROCODE_PLACEHOLDER="@@MCPKG@@"
 VIDEO_PLACEHOLDER="@@VIDEOSTR@@"
 DISK_PLACEHOLDER="@@DISKVAL@@"
 KERNEL_PLACEHOLDER="@@KVAL@@"
-DESKTOP_PLACEHOLDER="@@DVAL@@"
+X_SERVER_PLACEHOLDER="@@XVAL@@"
 GRUBTARGET_PLACEHOLDER="@@GRUBTGT@@"
 FSTYPE_PLACEHOLDER="@@FSTYPE@@"
 ESP_UUID_PLACEHOLDER="@@ESP_UUID@@"
@@ -537,10 +536,10 @@ VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 USE="dbus udev ssl unicode usb -systemd"
 EOF
 
-if [[ "${DESKTOP_PLACEHOLDER}" != "headless" ]]; then
+if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
   cat >> /etc/portage/make.conf <<EOF
-# Desktop environment USE flags
-USE="\${USE} X elogind acpi alsa bluetooth cups policykit pipewire wifi"
+# X server USE flags
+USE="\${USE} X elogind acpi alsa"
 EOF
 fi
 
@@ -849,12 +848,12 @@ if dmesg | grep -qi "virtualbox"; then
     usermod -aG vboxguest "${USER_PLACEHOLDER}"
 fi
 
-### DESKTOP ENVIRONMENT (if selected) - STEP 11 ###
-# Only after core system is set up
+### X SERVER (if selected) - STEP 11 ###
+# Only install minimal X server if requested
 
-if [[ "${DESKTOP_PLACEHOLDER}" != "headless" ]]; then
-    echo "▶ Installing X.Org Server..."
-    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers x11-apps/xinit
+if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
+    echo "▶ Installing minimal X server..."
+    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers 
     
     # Configure keyboard in X11
     mkdir -p /etc/X11/xorg.conf.d
@@ -873,35 +872,16 @@ EOF
     echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     
-    # Audio
-    emerge --quiet media-video/pipewire media-video/wireplumber
-    
-    # Desktop Environment
-    case "${DESKTOP_PLACEHOLDER}" in
-        xfce)
-            echo "▶ Installing XFCE desktop environment..."
-            emerge --quiet xfce-base/xfce4-meta x11-misc/lightdm x11-misc/lightdm-gtk-greeter
-            rc-update add lightdm default
-            ;;
-        lxqt)
-            echo "▶ Installing LXQt desktop environment..."
-            emerge --quiet lxqt-base/lxqt-meta lxde-base/lxdm
-            rc-update add lxdm default
-            ;;
-    esac
-    
-    # Basic terminal fallback
-    emerge --quiet x11-terms/xterm
-
-    # Text editor
-    emerge --quiet app-editors/nano
-
-    # Common applications
-    # emerge --quiet www-client/firefox
-
+    # Basic terminal and utilities for X
+    emerge --quiet x11-terms/xterm x11-apps/xinit
 fi
 
 ### FINAL TOUCHES - STEP 12 ###
+
+# Common applications
+
+# Text editor
+emerge --quiet app-editors/nano
 
 echo "▶ Checking for important Gentoo news items..."
 eselect news read new
@@ -931,13 +911,8 @@ case $KMETHOD in
   1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
 esac
 sed -i "s|@@KVAL@@|$kval|" "$fh"
-case $DESKTOP in
-  1) dval="xfce" ;;
-  2) dval="lxqt" ;;
-  3) dval="headless" ;;
-  *) dval="headless" ;; # Default fallback
-esac
-sed -i "s|@@DVAL@@|$dval|" "$fh"
+[[ $X_SERVER == [Yy]* ]] && xval="yes" || xval="no"
+sed -i "s|@@XVAL@@|$xval|" "$fh"
 [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
 sed -i "s|@@GRUBTGT@@|$grubtgt|" "$fh"
 sed -i "s|@@FSTYPE@@|$FSTYPE|" "$fh"
