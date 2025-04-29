@@ -361,15 +361,69 @@ select_locale() {
 select_timezone() {
   log "Configuring timezone..."
   
-  echo -e "\n${cyn}Enter your timezone (e.g. America/New_York, Europe/London):${nc}"
-  read -rp "Timezone: " TZ
+  local timezones=(
+    "Africa/Cairo"           "Egypt"
+    "Africa/Johannesburg"    "South Africa"
+    "Africa/Lagos"           "Nigeria"
+    "America/Anchorage"      "Alaska"
+    "America/Chicago"        "US Central"
+    "America/Denver"         "US Mountain"
+    "America/Los_Angeles"    "US Pacific"
+    "America/New_York"       "US Eastern"
+    "America/Phoenix"        "Arizona (no DST)"
+    "America/Mexico_City"    "Mexico"
+    "America/Sao_Paulo"      "Brazil"
+    "America/Toronto"        "Canada Eastern"
+    "America/Vancouver"      "Canada Pacific"
+    "Asia/Dubai"             "UAE"
+    "Asia/Hong_Kong"         "Hong Kong"
+    "Asia/Jerusalem"         "Israel"
+    "Asia/Kolkata"           "India"
+    "Asia/Seoul"             "Korea"
+    "Asia/Shanghai"          "China"
+    "Asia/Singapore"         "Singapore"
+    "Asia/Tokyo"             "Japan"
+    "Australia/Melbourne"    "Australia Eastern"
+    "Australia/Perth"        "Australia Western"
+    "Australia/Sydney"       "Australia (NSW)"
+    "Europe/Amsterdam"       "Netherlands"
+    "Europe/Berlin"          "Germany"
+    "Europe/Dublin"          "Ireland"
+    "Europe/London"          "United Kingdom"
+    "Europe/Madrid"          "Spain"
+    "Europe/Moscow"          "Russia"
+    "Europe/Paris"           "France"
+    "Europe/Rome"            "Italy"
+    "Europe/Stockholm"       "Sweden"
+    "Europe/Zurich"          "Switzerland"
+    "Pacific/Auckland"       "New Zealand"
+    "Pacific/Honolulu"       "Hawaii"
+    "UTC"                    "Universal Time"
+  )
+
+  echo -e "${cyn}Select your timezone:${nc}"
+  PS3="Timezone #: "
   
-  if [[ -z "$TZ" ]]; then
-    # Default to UTC if nothing entered
-    TZ="UTC"
-  fi
+  # Create a temporary array with just the descriptions
+  local descriptions=()
+  for ((i=1; i<${#timezones[@]}; i+=2)); do
+    descriptions+=("${timezones[i]} (${timezones[i-1]})")
+  done
   
-  log "Selected timezone: $TZ"
+  select choice in "${descriptions[@]}" "Other (manual entry)"; do
+    if [[ $REPLY -gt 0 && $REPLY -le ${#descriptions[@]} ]]; then
+      # Convert reply to array index (accounting for 0-based indexing and pairs)
+      local idx=$(( (REPLY-1) * 2 ))
+      TZ="${timezones[idx]}"
+      log "Selected timezone: $TZ"
+      break
+    elif [[ "$choice" == "Other (manual entry)" ]]; then
+      ask TZ "Enter your timezone (e.g. America/New_York)" "UTC"
+      break
+    else
+      echo "Invalid selection. Please try again."
+    fi
+  done
 }
 
 configure_accounts() {
