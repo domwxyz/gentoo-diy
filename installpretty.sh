@@ -463,29 +463,56 @@ select_disk() {
   log "Detecting installable disks..."
   mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE,MODEL -x SIZE | grep -E '/dev/(sd|nvme|vd)')
   [[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
-
-  echo -e "${cyn}Available disks:${nc}"
-  for i in "${!DISKS[@]}"; do
-    echo "$((i+1))) ${DISKS[$i]}"
-  done
-  echo
-
-  while true; do
-    read -rp "Enter disk number: " choice
-    if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
-      disk_line="${DISKS[$((choice-1))]}"
-      DISK=$(echo "$disk_line" | awk '{print $1}')
-      DISK_SIZE=$(echo "$disk_line" | awk '{print $2}')
-      DISK_MODEL=$(echo "$disk_line" | awk '{$1=$2=""; print substr($0,3)}' | sed 's/^ *//')
-      
-      echo -e "\n${ylw}Selected disk:${nc} $DISK"
-      echo -e "${ylw}Size:${nc} $DISK_SIZE"
-      [[ -n "$DISK_MODEL" ]] && echo -e "${ylw}Model:${nc} $DISK_MODEL"
-      break
+  
+  # Extract just the device paths for the menu (first column)
+  local disk_options=()
+  local disk_descriptions=()
+  for disk_line in "${DISKS[@]}"; do
+    local device=$(echo "$disk_line" | awk '{print $1}')
+    local size=$(echo "$disk_line" | awk '{print $2}')
+    local model=$(echo "$disk_line" | awk '{$1=$2=""; print substr($0,3)}' | sed 's/^ *//')
+    
+    disk_options+=("$device")
+    if [[ -n "$model" ]]; then
+      disk_descriptions+=("$device ($size - $model)")
     else
-      echo "Invalid selection. Please enter a number between 1 and ${#DISKS[@]}."
+      disk_descriptions+=("$device ($size)")
     fi
   done
+  
+  # Default to first disk if there's only one
+  local default_disk=""
+  [[ ${#disk_options[@]} -eq 1 ]] && default_disk="${disk_options[0]}"
+  
+  # Show the disk descriptions in the menu
+  echo -e "${cyn}Available disks:${nc}"
+  for i in "${!disk_descriptions[@]}"; do
+    echo "  $((i+1))) ${disk_descriptions[$i]}"
+  done
+  echo
+  
+  # Ask for disk selection with default if only one disk
+  ask DISK_CHOICE "Enter disk number" "${default_disk:+1}"
+  
+  # Validate and process the choice
+  if [[ "$DISK_CHOICE" =~ ^[0-9]+$ && "$DISK_CHOICE" -ge 1 && "$DISK_CHOICE" -le ${#disk_options[@]} ]]; then
+    DISK="${disk_options[$((DISK_CHOICE-1))]}"
+    
+    # Get details for the selected disk
+    for disk_line in "${DISKS[@]}"; do
+      if [[ "$disk_line" == "$DISK"* ]]; then
+        DISK_SIZE=$(echo "$disk_line" | awk '{print $2}')
+        DISK_MODEL=$(echo "$disk_line" | awk '{$1=$2=""; print substr($0,3)}' | sed 's/^ *//')
+        break
+      fi
+    done
+    
+    echo -e "\n${ylw}Selected disk:${nc} $DISK"
+    echo -e "${ylw}Size:${nc} $DISK_SIZE"
+    [[ -n "$DISK_MODEL" ]] && echo -e "${ylw}Model:${nc} $DISK_MODEL"
+  else
+    die "Invalid disk selection: $DISK_CHOICE"
+  fi
 
   [[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
   log "Set partition suffix: '$P' for disk $DISK"
@@ -495,22 +522,15 @@ select_disk() {
   echo -e "${red}WARNING:${nc} This will ${red}ERASE ALL DATA${nc} on ${ylw}${DISK}${nc}"
   echo -e "         All existing partitions and data will be permanently deleted."
   echo
-  
-  while true; do
-    read -rp "Proceed with erasing all data on this disk? (yes/no): " disk_confirm
-    case $disk_confirm in
-      yes) 
-        log "Disk confirmed for partitioning."
-        break 
-        ;;
-      no) 
-        die "Installation aborted by user" 
-        ;;
-      *) 
-        echo "Please type 'yes' or 'no'" 
-        ;;
-    esac
-  done
+
+  # Use the ask function with a default of "n" (safer option)
+  ask DISK_CONFIRM "Proceed with erasing all data on this disk? (y/n)" "n"
+
+  if [[ $DISK_CONFIRM == [Yy]* ]]; then
+    log "Disk confirmed for partitioning."
+  else
+    die "Installation aborted by user"
+  fi
 }
 
 partition_disk() {
@@ -620,53 +640,12 @@ download_stage3() {
   wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
       "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
   
-  verify_stage3 "${stage3_url}"
-  
   log "Extracting stage3 tarball..."
   tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
   
   # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
-}
-
-verify_stage3() {
-  local stage3_url="$1"
-  local stage3_dir stage3_file
-  
-  # Extract directory path from the stage3 path
-  stage3_dir=$(dirname "${stage3_url}")
-  stage3_file=$(basename "${stage3_url}")
-  
-  if command -v gpg &>/dev/null; then
-    ask VERIFY_STAGE3 "Verify stage3 tarball integrity? (y/n)" "n"
-    if [[ $VERIFY_STAGE3 == [Yy]* ]]; then
-      log "Verifying stage3 tarball integrity..."
-      
-      # Download the DIGESTS file
-      wget -q --show-progress -O /mnt/gentoo/DIGESTS \
-          "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_dir}/DIGESTS"
-      
-      # Simple checksum verification
-      log "Verifying stage3 checksum..."
-      local sha512_expected sha512_actual
-      sha512_expected=$(grep -A1 -E "${stage3_file}" /mnt/gentoo/DIGESTS | grep -E "SHA512" | head -n1 | awk '{print $1}')
-      sha512_actual=$(sha512sum /mnt/gentoo/stage3.tar.xz | awk '{print $1}')
-      
-      if [[ "$sha512_expected" == "$sha512_actual" ]]; then
-        log "✅ Stage3 tarball checksum verified"
-      else
-        warn "❌ Checksum verification failed!"
-        local checksum_continue
-        read -rp "Continue anyway? (y/n): " checksum_continue
-        [[ $checksum_continue != [Yy]* ]] && die "Installation aborted due to checksum mismatch"
-      fi
-    else
-      log "Skipping stage3 verification"
-    fi
-  else
-    log "GPG not available - skipping stage3 verification"
-  fi
 }
 
 ########################  CHROOT PREPARATION  ##########################
