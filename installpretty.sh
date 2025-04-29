@@ -606,84 +606,97 @@ partition_disk() {
   trap cleanup EXIT INT TERM
 }
 
-########################  MAIN EXECUTION  #############################
-main() {
-  # Check requirements and display welcome
-  check_requirements
-  welcome_banner
+########################  STAGE3 DOWNLOAD  #############################
+download_stage3() {
+  section "Stage 3 tarball download"
   
-  # Check and setup network
-  check_network
-  
-  # Hardware detection
-  detect_hardware
-  
-  # User configuration
-  configuration_wizard
-  
-  # Show configuration summary
-  display_config_summary
-  
-  # Disk selection
-  select_disk
+  log "Fetching stage3 manifest..."
+  local stage3_url
+  stage3_url=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
+               | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
+               || die "Unable to parse stage3 manifest"
 
-  # Partition and format disk
-  partition_disk
-  
-  # Here the script would continue with partitioning, stage3 download, etc.
-  log "Ready to begin Gentoo installation..."
-  
-  ########################  stage3  #####################################
-  log "Fetching stage3 manifest …"
-  STAGE=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
-          | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
-          || die "Unable to parse stage3 manifest"
-
-  log "Downloading latest stage3: ${STAGE}"
+  log "Downloading latest stage3: ${stage3_url}"
   wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
-      "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE}"
-
-  if command -v gpg &>/dev/null; then
-      ask VERIFY_STAGE3 "Verify stage3 tarball integrity? (y/n)" "n"
-      if [[ $VERIFY_STAGE3 == [Yy]* ]]; then
-          log "Verifying stage3 tarball integrity..."
-          
-          # Extract directory path from the stage3 path
-          STAGE_DIR=$(dirname "${STAGE}")
-          STAGE_FILE=$(basename "${STAGE}")
-          
-          # Download the DIGESTS file
-          wget -q --show-progress -O /mnt/gentoo/DIGESTS \
-              "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE_DIR}/DIGESTS"
-          
-          # Simple checksum verification
-          log "Verifying stage3 checksum..."
-          SHA512_EXPECTED=$(grep -A1 -E "${STAGE_FILE}" /mnt/gentoo/DIGESTS | grep -E "SHA512" | head -n1 | awk '{print $1}')
-          SHA512_ACTUAL=$(sha512sum /mnt/gentoo/stage3.tar.xz | awk '{print $1}')
-          
-          if [[ "$SHA512_EXPECTED" == "$SHA512_ACTUAL" ]]; then
-              log "✅ Stage3 tarball checksum verified"
-          else
-              warn "❌ Checksum verification failed!"
-              read -rp "Continue anyway? (y/n): " checksum_continue
-              [[ $checksum_continue != [Yy]* ]] && die "Installation aborted due to checksum mismatch"
-          fi
-      else
-          log "Skipping stage3 verification"
-      fi
-  else
-      log "GPG not available - skipping stage3 verification"
-  fi
-
+      "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
+  
+  verify_stage3 "${stage3_url}"
+  
+  log "Extracting stage3 tarball..."
   tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
+  
+  # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
+}
 
-  ########################  bind mounts  ################################
-  for fs in proc sys dev; do mount --rbind /$fs /mnt/gentoo/$fs; mount --make-rslave /mnt/gentoo/$fs; done
+verify_stage3() {
+  local stage3_url="$1"
+  local stage3_dir stage3_file
+  
+  # Extract directory path from the stage3 path
+  stage3_dir=$(dirname "${stage3_url}")
+  stage3_file=$(basename "${stage3_url}")
+  
+  if command -v gpg &>/dev/null; then
+    ask VERIFY_STAGE3 "Verify stage3 tarball integrity? (y/n)" "n"
+    if [[ $VERIFY_STAGE3 == [Yy]* ]]; then
+      log "Verifying stage3 tarball integrity..."
+      
+      # Download the DIGESTS file
+      wget -q --show-progress -O /mnt/gentoo/DIGESTS \
+          "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_dir}/DIGESTS"
+      
+      # Simple checksum verification
+      log "Verifying stage3 checksum..."
+      local sha512_expected sha512_actual
+      sha512_expected=$(grep -A1 -E "${stage3_file}" /mnt/gentoo/DIGESTS | grep -E "SHA512" | head -n1 | awk '{print $1}')
+      sha512_actual=$(sha512sum /mnt/gentoo/stage3.tar.xz | awk '{print $1}')
+      
+      if [[ "$sha512_expected" == "$sha512_actual" ]]; then
+        log "✅ Stage3 tarball checksum verified"
+      else
+        warn "❌ Checksum verification failed!"
+        local checksum_continue
+        read -rp "Continue anyway? (y/n): " checksum_continue
+        [[ $checksum_continue != [Yy]* ]] && die "Installation aborted due to checksum mismatch"
+      fi
+    else
+      log "Skipping stage3 verification"
+    fi
+  else
+    log "GPG not available - skipping stage3 verification"
+  fi
+}
 
-  ########################  second‑stage (inside chroot)  ###############
-  cat > /mnt/gentoo/root/inside.sh <<'EOS'
+########################  CHROOT PREPARATION  ##########################
+prepare_chroot() {
+  section "Chroot environment preparation"
+  
+  log "Setting up bind mounts..."
+  for fs in proc sys dev; do 
+    mount --rbind /$fs /mnt/gentoo/$fs
+    mount --make-rslave /mnt/gentoo/$fs
+  done
+  
+  log "Creating chroot installation script..."
+  create_chroot_script
+  
+  # Handle passwords securely
+  log "Securely storing credentials for chroot environment..."
+  openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
+  openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
+  
+  # Clear passwords from memory for security
+  unset ROOT_PASS USER_PASS
+}
+
+########################  CHROOT SCRIPT CREATION  ######################
+create_chroot_script() {
+  local chroot_script="/mnt/gentoo/root/inside.sh"
+  
+  # Create the chroot script
+  cat > "$chroot_script" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/profile
@@ -711,23 +724,24 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
-### PORTAGE CONFIGURATION - STEP 1 ###
-# Following Handbook Chapter 5 - Configuring Portage
+###############################################################
+#                      PORTAGE SETUP                          #
+###############################################################
+portage_configuration() {
+  echo "▶ Configuring Portage..."
+  # Create necessary directories for Portage configuration
+  mkdir -p /etc/portage/package.use
+  mkdir -p /etc/portage/package.license
+  mkdir -p /etc/portage/package.accept_keywords
+  mkdir -p /etc/portage/repos.conf
+  mkdir -p /var/db/repos/gentoo
 
-echo "▶ Configuring Portage..."
-# Create necessary directories for Portage configuration
-mkdir -p /etc/portage/package.use
-mkdir -p /etc/portage/package.license
-mkdir -p /etc/portage/package.accept_keywords
-mkdir -p /etc/portage/repos.conf
-mkdir -p /var/db/repos/gentoo
+  # Set up firmware license acceptance
+  echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
+  echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
 
-# Set up firmware license acceptance
-echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
-echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
-
-# Configure make.conf with detected hardware
-cat >> /etc/portage/make.conf <<EOF
+  # Configure make.conf with detected hardware
+  cat >> /etc/portage/make.conf <<EOF
 # Compiler options
 MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 
@@ -738,114 +752,121 @@ VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 USE="dbus udev ssl unicode usb -systemd"
 EOF
 
-if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
-  cat >> /etc/portage/make.conf <<EOF
+  if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
+    cat >> /etc/portage/make.conf <<EOF
 # X server USE flags
 USE="\${USE} X elogind acpi alsa"
 EOF
-fi
+  fi
 
-# Add package-specific USE flags
-mkdir -p /etc/portage/package.use
-echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
-echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
-echo "app-text/xmlto text" > /etc/portage/package.use/xmlto
+  # Add package-specific USE flags
+  mkdir -p /etc/portage/package.use
+  echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
+  echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
+  echo "app-text/xmlto text" > /etc/portage/package.use/xmlto
+}
 
-### REPOSITORY SETUP - STEP 2 ###
-# Following Handbook Chapter 5 - Installing the Gentoo repository
+setup_repositories() {
+  echo "▶ Setting up Gentoo repositories..."
+  # Copy the Gentoo repository configuration
+  cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
 
-echo "▶ Setting up Gentoo repositories..."
-# Copy the Gentoo repository configuration
-cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
+  # Sync the repository using webrsync (most reliable method per handbook)
+  echo "▶ Syncing repository..."
+  emerge-webrsync
+}
 
-# Sync the repository using webrsync (most reliable method per handbook)
-echo "▶ Syncing repository..."
-emerge-webrsync
-
-### PROFILE SELECTION - STEP 3 ###
-# Following Handbook Chapter 6 - Choosing the right profile
-
-echo "▶ Selecting profile..."
-eselect profile list
-if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-  echo "Found standard AMD64 OpenRC profile #$profile_num"
-  eselect profile set "$profile_num"
-else
-  if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-    echo "Found AMD64 profile #$profile_num"
+select_profile() {
+  echo "▶ Selecting profile..."
+  eselect profile list
+  if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+    echo "Found standard AMD64 OpenRC profile #$profile_num"
     eselect profile set "$profile_num"
   else
-    echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
-    eselect profile list
+    if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+      echo "Found AMD64 profile #$profile_num"
+      eselect profile set "$profile_num"
+    else
+      echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
+      eselect profile list
+    fi
   fi
-fi
+}
 
-### BASIC SYSTEM CONFIGURATION - STEP 4 ###
-# Following Handbook Chapter 8 - Configuring the system
+###############################################################
+#                    SYSTEM CONFIGURATION                     #
+###############################################################
+configure_base_system() {
+  echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
+  echo "${TZ_PLACEHOLDER}" > /etc/timezone
+  emerge --config sys-libs/timezone-data
 
-echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
-echo "${TZ_PLACEHOLDER}" > /etc/timezone
-emerge --config sys-libs/timezone-data
+  echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
+  echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
+  locale-gen
+  eselect locale set ${LOCALE_PLACEHOLDER}
+  env-update && source /etc/profile
 
-echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
-echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
-locale-gen
-eselect locale set ${LOCALE_PLACEHOLDER}
-env-update && source /etc/profile
+  echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
+  echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
+}
 
-echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
-echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
+###############################################################
+#                     KERNEL INSTALLATION                     #
+###############################################################
+install_kernel() {
+  echo "▶ Installing kernel sources..."
+  emerge --quiet sys-kernel/gentoo-sources
+  eselect kernel set 1
 
-### KERNEL INSTALLATION - STEP 5 ###
-# Following Handbook Chapter 7 - Configuring the kernel
-
-echo "▶ Installing kernel sources..."
-emerge --quiet sys-kernel/gentoo-sources
-eselect kernel set 1
-
-case "${KERNEL_PLACEHOLDER}" in
+  case "${KERNEL_PLACEHOLDER}" in
     genkernel)
-        echo "▶ Installing genkernel and required tools..."
-        emerge --quiet sys-kernel/genkernel sys-apps/pciutils
-        echo "▶ Running genkernel with menuconfig..."
-        genkernel --menuconfig all
-        ;;
+      echo "▶ Installing genkernel and required tools..."
+      emerge --quiet sys-kernel/genkernel sys-apps/pciutils
+      echo "▶ Running genkernel with menuconfig..."
+      genkernel --menuconfig all
+      ;;
     manual_auto)
-        echo "▶ Building kernel with default configuration..."
-        cd /usr/src/linux
-        make defconfig
-        make -j$(nproc)
-        make modules_install install
-        ;;
+      echo "▶ Building kernel with default configuration..."
+      cd /usr/src/linux
+      make defconfig
+      make -j$(nproc)
+      make modules_install install
+      ;;
     manual)
-        echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
-        echo "⚠ You must compile and install the kernel before rebooting"
-        echo "⚠ For reference:"
-        echo "⚠   cd /usr/src/linux"
-        echo "⚠   make menuconfig"
-        echo "⚠   make -j$(nproc)"
-        echo "⚠   make modules_install install"
-        ;;
-esac
+      echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
+      echo "⚠ You must compile and install the kernel before rebooting"
+      echo "⚠ For reference:"
+      echo "⚠   cd /usr/src/linux"
+      echo "⚠   make menuconfig"
+      echo "⚠   make -j$(nproc)"
+      echo "⚠   make modules_install install"
+      ;;
+  esac
+}
 
-### FIRMWARE INSTALLATION - STEP 6 ###
-# Following Handbook Chapter 7 - Firmware
-
-echo "▶ Installing firmware packages..."
-# Install microcode for CPU
-if [[ -n "${MICROCODE_PLACEHOLDER}" ]]; then
+###############################################################
+#                    FIRMWARE INSTALLATION                    #
+###############################################################
+install_firmware() {
+  echo "▶ Installing firmware packages..."
+  # Install microcode for CPU
+  if [[ -n "${MICROCODE_PLACEHOLDER}" ]]; then
     echo "▶ Installing CPU microcode: ${MICROCODE_PLACEHOLDER}"
     emerge --quiet "${MICROCODE_PLACEHOLDER}"
-fi
+  fi
 
-# Always install linux-firmware for general hardware
-echo "▶ Installing system firmware..."
-emerge --quiet sys-kernel/linux-firmware
+  # Always install linux-firmware for general hardware
+  echo "▶ Installing system firmware..."
+  emerge --quiet sys-kernel/linux-firmware
+}
 
-### HARDWARE DETECTION AND OPTIMIZATION - STEP 6.5 ###
-
-# Laptop-specific tools and optimizations
-if [ -d /sys/class/power_supply/BAT* ]; then
+###############################################################
+#              HARDWARE DETECTION & OPTIMIZATION              #
+###############################################################
+detect_and_configure_hardware() {
+  # Laptop-specific tools and optimizations
+  if [ -d /sys/class/power_supply/BAT* ]; then
     echo "▶ Laptop detected, installing power management..."
     emerge --quiet sys-power/tlp sys-power/powertop
     rc-update add tlp default
@@ -857,12 +878,12 @@ if [ -d /sys/class/power_supply/BAT* ]; then
     
     # ThinkPad-specific configuration
     if echo "$SYSTEM_VENDOR $SYSTEM_PRODUCT" | grep -q "THINKPAD" || echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
-        echo "▶ ThinkPad detected, installing additional tools..."
-        emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
-        
-        # Basic thinkfan config
-        if [ ! -f /etc/thinkfan.conf ]; then
-            cat > /etc/thinkfan.conf <<THINKFAN
+      echo "▶ ThinkPad detected, installing additional tools..."
+      emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
+      
+      # Basic thinkfan config
+      if [ ! -f /etc/thinkfan.conf ]; then
+        cat > /etc/thinkfan.conf <<THINKFAN
 tp_fan /proc/acpi/ibm/fan
 hwmon /sys/class/thermal/thermal_zone0/temp
 
@@ -874,23 +895,23 @@ hwmon /sys/class/thermal/thermal_zone0/temp
 (5,     63,     85)
 (7,     68,     95)
 THINKFAN
-        fi
-        
-        rc-update add thinkfan default
-        
-        # Enable tp_smapi
-        echo "tp_smapi" > /etc/modules-load.d/tp_smapi.conf
+      fi
+      
+      rc-update add thinkfan default
+      
+      # Enable tp_smapi
+      echo "tp_smapi" > /etc/modules-load.d/tp_smapi.conf
     fi
     
     # Dell Latitude/Precision configuration
     if echo "$SYSTEM_VENDOR" | grep -q "DELL" && echo "$SYSTEM_PRODUCT" | grep -q -E "Latitude|Precision"; then
-        echo "▶ Dell Latitude/Precision detected, installing additional tools..."
-        emerge --quiet sys-power/thermald
-        rc-update add thermald default
-        
-        # Dell-specific power management
-        mkdir -p /etc/tlp.d/
-        echo "# Dell-specific power management settings
+      echo "▶ Dell Latitude/Precision detected, installing additional tools..."
+      emerge --quiet sys-power/thermald
+      rc-update add thermald default
+      
+      # Dell-specific power management
+      mkdir -p /etc/tlp.d/
+      echo "# Dell-specific power management settings
 CPU_SCALING_GOVERNOR_ON_AC=performance
 CPU_SCALING_GOVERNOR_ON_BAT=powersave
 CPU_ENERGY_PERF_POLICY_ON_AC=performance
@@ -900,13 +921,13 @@ CPU_ENERGY_PERF_POLICY_ON_BAT=power
     
     # HP EliteBook/ProBook configuration
     if echo "$SYSTEM_VENDOR" | grep -q "HP" && echo "$SYSTEM_PRODUCT" | grep -q -E "EliteBook|ProBook"; then
-        echo "▶ HP EliteBook/ProBook detected, installing additional tools..."
-        emerge --quiet sys-power/thermald
-        rc-update add thermald default
-        
-        # HP-specific power management
-        mkdir -p /etc/tlp.d/
-        echo "# HP-specific power management settings
+      echo "▶ HP EliteBook/ProBook detected, installing additional tools..."
+      emerge --quiet sys-power/thermald
+      rc-update add thermald default
+      
+      # HP-specific power management
+      mkdir -p /etc/tlp.d/
+      echo "# HP-specific power management settings
 CPU_SCALING_GOVERNOR_ON_AC=performance
 CPU_SCALING_GOVERNOR_ON_BAT=powersave
 PCIE_ASPM_ON_BAT=powersupersave
@@ -915,145 +936,163 @@ PCIE_ASPM_ON_BAT=powersupersave
     
     # Lenovo (non-ThinkPad) configuration
     if echo "$SYSTEM_VENDOR" | grep -q "LENOVO" && ! echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
-        echo "▶ Lenovo laptop detected, installing additional tools..."
-        emerge --quiet sys-power/thermald
-        rc-update add thermald default
+      echo "▶ Lenovo laptop detected, installing additional tools..."
+      emerge --quiet sys-power/thermald
+      rc-update add thermald default
     fi
     
     echo "▶ Power management tools installed"
-fi
+  fi
 
-# Check for virtualization environments
-echo "▶ Checking for virtualization environment..."
-if dmesg | grep -qi "virtualbox"; then
+  # Check for virtualization environments
+  setup_virtualization
+
+  # Wi-Fi hardware detection and setup
+  configure_wifi
+}
+
+setup_virtualization() {
+  echo "▶ Checking for virtualization environment..."
+  if dmesg | grep -qi "virtualbox"; then
     echo "▶ VirtualBox detected, installing guest additions..."
     emerge --quiet app-emulation/virtualbox-guest-additions
     rc-update add virtualbox-guest-additions default
-elif dmesg | grep -qi "qemu\|kvm"; then
+  elif dmesg | grep -qi "qemu\|kvm"; then
     echo "▶ QEMU/KVM virtual machine detected, installing guest tools..."
     emerge --quiet app-emulation/qemu-guest-agent
     rc-update add qemu-guest-agent default
-fi
+  fi
+}
 
-# Wi-Fi hardware detection and setup
-if lspci | grep -q -i 'network\|wireless'; then
+configure_wifi() {
+  if lspci | grep -q -i 'network\|wireless'; then
     echo "▶ Wi-Fi hardware detected, installing drivers..."
     emerge --quiet net-wireless/iw net-wireless/wpa_supplicant net-wireless/iwd
     
     # Intel Wi-Fi
     if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
-        echo "▶ Intel Wi-Fi detected..."
-        emerge --quiet sys-firmware/iwlwifi-firmware
+      echo "▶ Intel Wi-Fi detected..."
+      emerge --quiet sys-firmware/iwlwifi-firmware
     fi
     
     # Broadcom Wi-Fi
     if lspci | grep -i -E 'broadcom' >/dev/null; then
-        echo "▶ Broadcom Wi-Fi detected..."
-        emerge --quiet net-wireless/broadcom-sta
-        echo "wl" >> /etc/modules-load.d/broadcom.conf
+      echo "▶ Broadcom Wi-Fi detected..."
+      emerge --quiet net-wireless/broadcom-sta
+      echo "wl" >> /etc/modules-load.d/broadcom.conf
     fi
     
     # Configure NetworkManager to use iwd for Wi-Fi
     mkdir -p /etc/NetworkManager/conf.d/
     echo "[device]
 wifi.backend=iwd" > /etc/NetworkManager/conf.d/wifi_backend.conf
-fi
+  fi
+}
 
-### SYSTEM TOOLS - STEP 7 ###
-# Following Handbook Chapter 8 - System tools
+###############################################################
+#                     SYSTEM TOOLS SETUP                      #
+###############################################################
+install_system_tools() {
+  echo "▶ Installing essential system tools..."
+  emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
+  rc-update add sysklogd default
 
-echo "▶ Installing essential system tools..."
-emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
-rc-update add sysklogd default
+  # Configure keyboard in console
+  echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
+  echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
+  rc-update add keymaps boot
 
-# Configure keyboard in console
-echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
-echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
-rc-update add keymaps boot
+  # For network management
+  echo "▶ Installing NetworkManager..."
+  emerge --quiet net-misc/networkmanager
+  rc-update add NetworkManager default
 
-# For network management
-echo "▶ Installing NetworkManager..."
-emerge --quiet net-misc/networkmanager
-rc-update add NetworkManager default
+  # Create a default NetworkManager connection config directory
+  mkdir -p /etc/NetworkManager/system-connections
+  chmod 700 /etc/NetworkManager/system-connections
 
-# Create a default NetworkManager connection config directory
-mkdir -p /etc/NetworkManager/system-connections
-chmod 700 /etc/NetworkManager/system-connections
+  # Install and enable SSH
+  emerge --quiet net-misc/openssh
+  rc-update add sshd default
 
-# Install and enable SSH
-emerge --quiet net-misc/openssh
-rc-update add sshd default
+  # Simple firewall config
+  emerge --quiet net-firewall/ufw
+  rc-update add ufw default
+}
 
-# Simple firewall config
-emerge --quiet net-firewall/ufw
-rc-update add ufw default
+###############################################################
+#                    BOOTLOADER INSTALLATION                  #
+###############################################################
+install_bootloader() {
+  echo "▶ Installing and configuring bootloader..."
+  emerge --quiet sys-boot/grub:2
 
-### BOOTLOADER INSTALLATION - STEP 8 ###
-# Following Handbook Chapter 10 - Configuring the bootloader
-
-echo "▶ Installing and configuring bootloader..."
-emerge --quiet sys-boot/grub:2
-
-# Install GRUB bootloader
-if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+  # Install GRUB bootloader
+  if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
     emerge --quiet sys-boot/efibootmgr
     echo "▶ Installing GRUB for UEFI system..."
     grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
-else
+  else
     echo "▶ Installing GRUB for BIOS system..."
     grub-install --target=i386-pc "${DISK_PLACEHOLDER}"
-fi
+  fi
 
-# Generate GRUB configuration
-echo "▶ Generating GRUB configuration..."
-echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+  # Generate GRUB configuration
+  echo "▶ Generating GRUB configuration..."
+  echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+  echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
+  grub-mkconfig -o /boot/grub/grub.cfg
+}
 
-### FILESYSTEM CONFIGURATION - STEP 9 ###
-# Following Handbook Chapter 8 - Filesystem
-
-echo "▶ Configuring filesystem..."
-# Set up fstab
-if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
-  cat > /etc/fstab <<FSTAB
+###############################################################
+#                   FILESYSTEM CONFIGURATION                  #
+###############################################################
+configure_filesystem() {
+  echo "▶ Configuring filesystem..."
+  # Set up fstab
+  if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+    cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
-else
-  cat > /etc/fstab <<FSTAB
+  else
+    cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
-fi
+  fi
+}
 
-### USER ACCOUNTS - STEP 10 ###
-# Following Handbook Chapter 11 - User administration
+###############################################################
+#                     USER ACCOUNT SETUP                      #
+###############################################################
+setup_user_accounts() {
+  echo "▶ Setting up user accounts..."
+  # Set root password
+  echo "root:${ROOT_HASH}" | chpasswd -e
 
-echo "▶ Setting up user accounts..."
-# Set root password
-echo "root:${ROOT_HASH}" | chpasswd -e
+  # Create regular user
+  useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
+  echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
 
-# Create regular user
-useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
-echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
+  # Configure sudo access
+  mkdir -p /etc/sudoers.d
+  echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
+  chmod 440 /etc/sudoers.d/wheel
 
-# Configure sudo access
-mkdir -p /etc/sudoers.d
-echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
-chmod 440 /etc/sudoers.d/wheel
-
-if dmesg | grep -qi "virtualbox"; then
+  if dmesg | grep -qi "virtualbox"; then
     usermod -aG vboxguest "${USER_PLACEHOLDER}"
-fi
+  fi
+}
 
-### X SERVER (if selected) - STEP 11 ###
-# Only install minimal X server if requested
-
-if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
+###############################################################
+#                     X SERVER INSTALLATION                   #
+###############################################################
+install_x_server() {
+  if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
     echo "▶ Installing minimal X server..."
     emerge --quiet x11-base/xorg-server x11-base/xorg-drivers 
     
@@ -1068,7 +1107,7 @@ EOF
 
     # Add variant if present
     if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-        echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+      echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     fi
     
     echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
@@ -1076,67 +1115,177 @@ EOF
     
     # Basic terminal and utilities for X
     emerge --quiet x11-terms/xterm x11-apps/xinit
-fi
+  fi
+}
 
-### FINAL TOUCHES - STEP 12 ###
+###############################################################
+#                        FINALIZATION                         #
+###############################################################
+perform_final_steps() {
+  # Common applications
+  echo "▶ Installing text editor..."
+  emerge --quiet app-editors/nano
 
-# Common applications
+  echo "▶ Checking for important Gentoo news items..."
+  eselect news read new
 
-# Text editor
-emerge --quiet app-editors/nano
+  echo "▶ Performing final cleanup..."
+  emerge --depclean --quiet
 
-echo "▶ Checking for important Gentoo news items..."
-eselect news read new
+  echo "🎉 Installation completed successfully!"
+  echo "🔄 You can now reboot into your new Gentoo system."
+}
 
-echo "▶ Performing final cleanup..."
-emerge --depclean --quiet
+###############################################################
+#                      MAIN EXECUTION                         #
+###############################################################
+# Execute all installation steps in sequence
+main() {
+  # Portage setup
+  portage_configuration
+  setup_repositories
+  select_profile
+  
+  # Basic system configuration
+  configure_base_system
+  
+  # Kernel installation
+  install_kernel
+  
+  # Firmware installation
+  install_firmware
+  
+  # Hardware detection and configuration
+  detect_and_configure_hardware
+  
+  # System tools installation
+  install_system_tools
+  
+  # Bootloader installation
+  install_bootloader
+  
+  # Filesystem configuration
+  configure_filesystem
+  
+  # User account setup
+  setup_user_accounts
+  
+  # X server installation (if selected)
+  install_x_server
+  
+  # Final steps
+  perform_final_steps
+}
 
-echo "🎉 Installation completed successfully!"
-echo "🔄 You can now reboot into your new Gentoo system."
+# Start the installation process
+main
 EOS
-  chmod +x /mnt/gentoo/root/inside.sh
 
-  ########################  substitute vars  ############################
-  fh=/mnt/gentoo/root/inside.sh
-  sed -i "s|@@TZVAL@@|$TZ|" "$fh"
-  sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$fh"
-  sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$fh"
-  sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$fh"
-  sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$fh"
-  sed -i "s|@@USERVAL@@|$USERNAME|" "$fh"
-  sed -i "s|@@VIDEOSTR@@|$VC|" "$fh"
-  sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$fh"
-  sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$fh"
-  sed -i "s|@@MCPKG@@|$MCPKG|" "$fh"
-  sed -i "s|@@DISKVAL@@|$DISK|" "$fh"
+  # Make the script executable
+  chmod +x "$chroot_script"
+}
+
+########################  CHROOT EXECUTION  ##########################
+execute_chroot() {
+  section "Chroot execution"
+  
+  # Replace placeholders in the chroot script
+  log "Preparing variables for chroot environment..."
+  local chroot_script="/mnt/gentoo/root/inside.sh"
+  
+  # System settings
+  sed -i "s|@@TZVAL@@|$TZ|" "$chroot_script"
+  sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$chroot_script"
+  sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$chroot_script"
+  sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$chroot_script"
+  sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$chroot_script"
+  sed -i "s|@@USERVAL@@|$USERNAME|" "$chroot_script"
+  
+  # Hardware settings
+  sed -i "s|@@VIDEOSTR@@|$VC|" "$chroot_script"
+  sed -i "s|@@MCPKG@@|$MCPKG|" "$chroot_script"
+  
+  # Partition settings
+  sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$chroot_script"
+  sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$chroot_script"
+  sed -i "s|@@DISKVAL@@|$DISK|" "$chroot_script"
+  
+  # Installation options
+  local kval
   case $KMETHOD in
-    1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
+    1) kval="genkernel" ;; 
+    2) kval="manual" ;; 
+    3) kval="manual_auto" ;;
   esac
-  sed -i "s|@@KVAL@@|$kval|" "$fh"
+  sed -i "s|@@KVAL@@|$kval|" "$chroot_script"
+  
+  local xval
   [[ $X_SERVER == [Yy]* ]] && xval="yes" || xval="no"
-  sed -i "s|@@XVAL@@|$xval|" "$fh"
+  sed -i "s|@@XVAL@@|$xval|" "$chroot_script"
+  
+  local grubtgt
   [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
-  sed -i "s|@@GRUBTGT@@|$grubtgt|" "$fh"
-  sed -i "s|@@FSTYPE@@|$FSTYPE|" "$fh"
-  MAKEOPTS="-j$(nproc)"
-  sed -i "s|@@MAKEOPTS@@|$MAKEOPTS|" "$fh"
-
-  openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
-  openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
-  unset ROOT_PASS USER_PASS
-
-  ########################  chroot  #####################################
-  log "Entering chroot …"
+  sed -i "s|@@GRUBTGT@@|$grubtgt|" "$chroot_script"
+  
+  sed -i "s|@@FSTYPE@@|$FSTYPE|" "$chroot_script"
+  
+  # Compilation settings
+  local makeopts="-j$(nproc)"
+  sed -i "s|@@MAKEOPTS@@|$makeopts|" "$chroot_script"
+  
+  # Execute the chroot script
+  log "Entering chroot environment..."
   chroot /mnt/gentoo /bin/bash -x /root/inside.sh
+}
 
-  ########################  cleanup  ####################################
-  log "Cleaning up …"
-  umount -l /mnt/gentoo/{dev,proc,sys} || true
-  umount -R /mnt/gentoo
-  swapoff "$SWP"
+########################  CLEANUP AND FINALIZATION  ###################
+cleanup_and_finalize() {
+  section "Cleanup and finalization"
+  
+  log "Unmounting filesystems..."
+  umount -l /mnt/gentoo/{dev,proc,sys} 2>/dev/null || true
+  umount -R /mnt/gentoo 2>/dev/null || true
+  swapoff "$SWP" 2>/dev/null || true
+  
+  if [[ $KMETHOD == 2 ]]; then
+    warn "You chose MANUAL-interactive kernel. Compile it before reboot!"
+  fi
+  
+  log "Installation complete!"
+  info "Remove the installation media and reboot to start using your new Gentoo system."
+  hr
+  echo "Thank you for using Gentoo DOT DIY installer! 🚀"
+}
 
-  [[ $KMETHOD == 2 ]] && warn "You chose MANUAL-interactive kernel. Compile it before reboot!"
-  log "Installation finished - remove the USB stick and reboot."
+########################  MAIN EXECUTION  #############################
+main() {
+  # Check requirements and display welcome
+  welcome_banner
+  
+  # Check and setup network
+  check_requirements
+  check_network
+  
+  # Hardware detection
+  detect_hardware
+  
+  # User configuration
+  configuration_wizard
+  display_config_summary
+
+  # Partition and format disk
+  select_disk
+  partition_disk
+  
+  # Download and extract stage3
+  download_stage3
+  
+  # Prepare chroot environment
+  prepare_chroot
+  execute_chroot
+  
+  # Cleanup and finalize
+  cleanup_and_finalize
 }
 
 # Start the installation
