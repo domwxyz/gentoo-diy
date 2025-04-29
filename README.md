@@ -17,9 +17,9 @@ A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems that priorit
 ## Quick Install
 
 ```bash
-curl -L https://gentoo.diy/install.sh -o install.sh
-chmod +x install.sh
-./install.sh
+curl -L https://gentoo.diy/install -o install
+chmod +x install
+./install
 ```
 
 ## Installation Steps
