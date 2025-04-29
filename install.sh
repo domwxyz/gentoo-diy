@@ -41,7 +41,6 @@ welcome_banner() {
     printf "**%s${color}%s${nc}%s**\n" "$left_pad" "$text" "$right_pad"
   }
   
-  # Print the banner with pauses
   clear
   echo
   sleep 0.3
