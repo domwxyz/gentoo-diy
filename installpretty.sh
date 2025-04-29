@@ -26,7 +26,7 @@ fi
 
 # Feedback functions
 log()  { printf "${grn}▶ %s${nc}\n"  "$*"; }
-info() { printf "${blu}ℹ %s${nc}\n"  "$*"; }
+info() { printf "${cyn}ℹ %s${nc}\n"  "$*"; }
 warn() { printf "${ylw}⚠ %s${nc}\n"  "$*"; }
 die()  { printf "${red}❌ %s${nc}\n" "$*"; exit 1; }
 hr()   { printf '%*s\n' "${1:-$(tput cols)}" '' | tr ' ' '─'; }
@@ -513,6 +513,99 @@ select_disk() {
   done
 }
 
+partition_disk() {
+  section "Disk partitioning"
+  
+  log "Partitioning $DISK..."
+  if [[ $UEFI == yes ]]; then
+    sgdisk --zap-all "$DISK"
+    sgdisk -n1:0:+512M -t1:ef00 -c1:"EFI System" "$DISK"
+    sgdisk -n2:0:+${SWAPSIZE}G -t2:8200 -c2:"swap" "$DISK"
+    sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+  else
+    parted -s "$DISK" mklabel msdos
+    parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
+    parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+  fi
+
+  log "Ensuring partitions are recognized..."
+  partprobe "$DISK"
+  sleep 3
+
+  # Double-check the partitions exist
+  if [[ $UEFI == yes ]]; then
+    if [[ ! -e "${DISK}${P}3" ]]; then
+      log "Waiting for partitions to become available..."
+      for i in {1..10}; do
+        sleep 1
+        [[ -e "${DISK}${P}3" ]] && break
+        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
+      done
+    fi
+  else
+    if [[ ! -e "${DISK}${P}2" ]]; then
+      log "Waiting for partitions to become available..."
+      for i in {1..10}; do
+        sleep 1
+        [[ -e "${DISK}${P}2" ]] && break
+        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
+      done
+    fi
+  fi
+
+  ESP="${DISK}${P}1"
+  SWP="${DISK}${P}2"
+  ROOT="${DISK}${P}3"
+
+  # For MBR partitioning where partitions start at 1 instead of 0
+  if [[ $UEFI != yes ]]; then
+    SWP="${DISK}${P}1"
+    ROOT="${DISK}${P}2"
+  fi
+
+  log "Disk partitioning complete:"
+  [[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
+  printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
+  printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
+  echo # Blank line for separation
+
+  # Format partitions
+  log "Formatting partitions..."
+  [[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
+
+  mkswap "$SWP"
+  if [[ $FSTYPE == ext4 ]]; then
+    mkfs.ext4 -L gentoo "$ROOT"
+  else
+    mkfs.btrfs -L gentoo "$ROOT"
+  fi
+
+  # Get UUIDs
+  if [[ $UEFI == yes ]]; then
+    ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
+  else
+    ESP_UUID=""  # Empty for non-UEFI systems
+  fi
+  SWP_UUID="$(blkid -s UUID -o value "$SWP")"
+  
+  # Mount filesystems
+  log "Mounting filesystems..."
+  mkdir -p /mnt/gentoo
+  mount "$ROOT" /mnt/gentoo
+  [[ $FSTYPE == btrfs ]] && btrfs subvolume create /mnt/gentoo/@ && umount /mnt/gentoo && mount -o subvol=@ "$ROOT" /mnt/gentoo
+
+  mkdir -p /mnt/gentoo/boot
+  [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
+  swapon "$SWP"
+
+  # Setup cleanup trap
+  cleanup() {
+    umount -lR /mnt/gentoo 2>/dev/null || true
+    [ -n "${SWP:-}" ] && swapoff "$SWP" 2>/dev/null || true
+  }
+  trap cleanup EXIT INT TERM
+}
+
 ########################  MAIN EXECUTION  #############################
 main() {
   # Check requirements and display welcome
@@ -533,6 +626,9 @@ main() {
   
   # Disk selection
   select_disk
+
+  # Partition and format disk
+  partition_disk
   
   # Here the script would continue with partitioning, stage3 download, etc.
   log "Ready to begin Gentoo installation..."
