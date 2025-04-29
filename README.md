@@ -1,17 +1,17 @@
 # Gentoo dot DIY - One-Curl Gentoo Installer
 
-A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems. **This is not an official Gentoo project.**
+A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems that prioritizes simplicity. **This is not an official Gentoo project.**
 
 ## Features
 
 - **Single command installation** with sensible defaults
 - **Auto-detection** of hardware: UEFI/BIOS, CPU, GPU, disk types
-- **Multiple desktop options**: XFCE, LXQt, or headless server
 - **Kernel flexibility**: genkernel, manual, or unattended build
 - **Filesystem choice**: Ext4 or Btrfs
-- **Network support**: Automatic Wi-Fi fallback
+- **Network support**: Automatic Wi-Fi fallback with iwd/wpa
 - **Hardware-specific optimizations** for ThinkPad, Dell, and HP laptops
 - **Virtualization support** for VirtualBox and QEMU/KVM environments
+- **NVMe suffix handling**, dynamic swap sizing, and proper partition detection
 - **Security** with UFW firewall enabled by default
 
 ## Quick Install
@@ -30,19 +30,20 @@ chmod +x install.sh
 4. **Configure**:
    - Network (automatic or guided Wi-Fi setup)
    - System details (hostname, passwords, timezone, locale)
-   - Hardware options (swap size, drivers)
-   - System type (kernel method, desktop environment, filesystem)
+   - Hardware options (swap size)
+   - System type (kernel method, filesystem)
+   - X server support (optional)
 5. **Wait** for installation to complete
 6. **Reboot** when finished
 
 ## System Requirements
 
 - **CPU**: 64-bit Intel or AMD processor
-- **RAM**: Minimum 2GB (4GB+ recommended for desktop environments)
-- **Storage**: 20GB+ free disk space (40GB+ recommended)
+- **RAM**: Minimum 2GB (4GB+ recommended)
+- **Storage**: 20GB+ free disk space
 - **Boot Media**: Gentoo LiveCD/USB with working internet access
 - **Internet**: Wired connection recommended; Wi-Fi supported with fallback setup
-- **Graphics**: Compatible GPU for desktop environments (Intel, AMD, or NVIDIA)
+- **Graphics**: Compatible GPU if X server option is selected
 
 ## Included Software
 
@@ -50,18 +51,21 @@ chmod +x install.sh
 - **Power Management**: TLP and powertop for laptops
 - **Security**: UFW firewall, sudo configuration
 - **System**: OpenSSH server, sysklogd
+- **Optional**: Basic X server support (if selected)
 
 ## Options
-
-**Desktop Environments:**
-- XFCE + LightDM: Full-featured lightweight desktop
-- LXQt + LXDM: Ultra-lightweight Qt desktop
-- Headless: Server configuration with SSH
 
 **Kernel Methods:**
 - genkernel: Guided configuration with menuconfig
 - manual-interactive: DIY kernel compilation
 - manual-AUTO: Unattended build with defconfig
+
+**Filesystems:**
+- Ext4: Standard Linux filesystem (default)
+- Btrfs: Advanced filesystem with snapshots
+
+**X Server:**
+- Optional minimal X server installation
 
 ## Manual Kernel Compilation
 
@@ -105,10 +109,7 @@ Happy Gentoo! For more information about Gentoo Linux, visit the [official Gento
 ## Troubleshooting
 
 - **No network**: Use NetworkManager tools to configure (`nmtui` or `nmcli`)
-- **Display issues**: Boot to text mode to reconfigure graphics
-- **Boot failures**: Chroot from LiveCD to repair
 - **Missing firmware/drivers**: If hardware isn't working, you may need additional firmware packages: `emerge --ask sys-kernel/linux-firmware`
-- **Power management**: For laptops, check TLP status with `tlp-stat`
 - **Virtualization issues**: Guest additions are automatically installed for VirtualBox/QEMU
 
 ## License
