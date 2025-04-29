@@ -75,7 +75,7 @@ select_from_menu() {
   local options=("$@")
   local option_count=${#options[@]}
   
-  echo -e "${blu}$prompt:${nc}"
+  echo -e "${cyn}$prompt:${nc}"
   for i in $(seq 0 $((option_count - 1))); do
     echo "  $((i + 1)). ${options[$i]}"
   done
@@ -338,7 +338,7 @@ select_locale() {
     "tr_TR.UTF-8"    "Turkish"
   )
 
-  echo -e "${blu}Select your preferred locale:${nc}"
+  echo -e "${cyn}Select your preferred locale:${nc}"
   PS3="Locale #: "
   
   # Create a temporary array with just the descriptions
@@ -366,7 +366,7 @@ select_locale() {
 select_timezone() {
   log "Configuring timezone..."
   
-  echo -e "\n${blu}Enter your timezone (e.g. America/New_York, Europe/London):${nc}"
+  echo -e "\n${cyn}Enter your timezone (e.g. America/New_York, Europe/London):${nc}"
   read -rp "Timezone: " TZ
   
   if [[ -z "$TZ" ]]; then
@@ -391,7 +391,7 @@ configure_system() {
   log "Configuring system options..."
   
   # X server
-  echo -e "\n${blu}X Server Configuration${nc}"
+  echo -e "\n${cyn}X Server Configuration${nc}"
   ask X_SERVER "Install minimal X server support? (y/n)" "n"
   
   if [[ $X_SERVER != [Yy]* ]]; then
@@ -402,19 +402,19 @@ configure_system() {
   fi
   
   # Kernel choice
-  echo -e "\n${blu}Kernel Configuration${nc}"
+  echo -e "\n${cyn}Kernel Configuration${nc}"
   echo "1) genkernel (menuconfig) - Automated kernel build with manual customization"
   echo "2) manual-interactive    - Completely manual kernel configuration"
   echo "3) manual-AUTO          - Automated kernel build with defaults"
   ask KMETHOD "Select kernel option (1-3)" "1"
   
   # Swap size
-  echo -e "\n${blu}Swap Configuration${nc}"
+  echo -e "\n${cyn}Swap Configuration${nc}"
   def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
   ask SWAPSIZE "Swap size in GiB" "$def_swap"
   
   # Filesystem
-  echo -e "\n${blu}Filesystem Selection${nc}"
+  echo -e "\n${cyn}Filesystem Selection${nc}"
   echo "1) ext4 - Standard Linux filesystem (recommended for most users)"
   echo "2) btrfs - Advanced filesystem with snapshots and other features"
   ask FS "Root filesystem (1-2)" "1"
@@ -441,7 +441,7 @@ display_config_summary() {
   echo -e "${blu}Hostname:${nc}         ${ylw}$HOSTNAME${nc}"
   echo -e "${blu}Username:${nc}         ${ylw}$USERNAME${nc}"
   echo -e "${blu}X Server:${nc}         ${ylw}$([[ $X_SERVER == [Yy]* ]] && echo "Yes" || echo "No")${nc}"
-  echo -e "${blu}Kernel method:${nc}    ${ylw}$([[ $KMETHOD == 1 ]] && echo "genkernel" || [[ $KMETHOD == 2 ]] && echo "manual" || echo "automated")${nc}"
+  echo -e "${blu}Kernel method:${nc}    ${ylw}$(case $KMETHOD in 1) echo "genkernel";; 2) echo "manual";; *) echo "automated";; esac)${nc}"
   echo -e "${blu}Swap Size:${nc}        ${ylw}${SWAPSIZE}GB${nc}"
   echo -e "${blu}Root Filesystem:${nc}  ${ylw}$FSTYPE${nc}"
   echo -e "${blu}CPU:${nc}              ${ylw}$CPU_TYPE${nc}"
@@ -464,7 +464,7 @@ select_disk() {
   mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE,MODEL -x SIZE | grep -E '/dev/(sd|nvme|vd)')
   [[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
 
-  echo -e "${blu}Available disks:${nc}"
+  echo -e "${cyn}Available disks:${nc}"
   for i in "${!DISKS[@]}"; do
     echo "$((i+1))) ${DISKS[$i]}"
   done
