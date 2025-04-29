@@ -1228,7 +1228,7 @@ cleanup_and_finalize() {
   log "Installation complete!"
   info "Remove the installation media and reboot to start using your new Gentoo system."
   hr
-  echo "Thank you for using Gentoo DOT DIY installer! 🚀"
+  echo "Thank you for using Gentoo dot DIY installer! 🚀"
 }
 
 ########################  MAIN EXECUTION  #############################
