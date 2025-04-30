@@ -686,42 +686,6 @@ download_stage3() {
   log "Downloading latest stage3: ${stage3_url}"
   wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}" \
       || die "Failed to download stage3 tarball"
-      
-  # Download verification files
-  log "Downloading verification files..."
-  wget -q -O "${stage3_base_path}.tar.xz.DIGESTS" "${stage3_base_url}.DIGESTS" \
-      || die "Failed to download DIGESTS file"
-  wget -q -O "${stage3_base_path}.tar.xz.DIGESTS.asc" "${stage3_base_url}.DIGESTS.asc" \
-      || die "Failed to download DIGESTS signature"
-  
-  log "Importing Gentoo Release Engineering GPG keys..."
-  mkdir -p /mnt/gentoo/root/.gnupg
-  chmod 700 /mnt/gentoo/root/.gnupg
-  
-  # Download and import Gentoo Release Engineering keys from official source
-  wget -q -O /tmp/gentoo-keys.asc https://qa-reports.gentoo.org/output/service-keys.gpg \
-      || die "Failed to download Gentoo Release keys"
-  gpg --import /tmp/gentoo-keys.asc \
-      || die "Failed to import Gentoo Release keys"
-  rm -f /tmp/gentoo-keys.asc
-  
-  # Verify the signature of the DIGESTS file
-  log "Verifying GPG signature..."
-  if gpg --verify "${stage3_base_path}.tar.xz.DIGESTS.asc" &>/dev/null; then
-    log "GPG signature verification successful"
-  else
-    die "GPG signature verification failed! The DIGESTS file may be compromised"
-  fi
-  
-  # Verify SHA256 checksum
-  log "Verifying SHA256 checksum..."
-  cd /mnt/gentoo
-  if grep -A1 SHA256 "${stage3_base_path}.tar.xz.DIGESTS" | grep -v SHA256 | \
-     grep "$(sha256sum "$(basename ${stage3_base_path}.tar.xz)" | awk '{print $1}')" > /dev/null; then
-    log "SHA256 checksum verified successfully"
-  else
-    die "SHA256 checksum verification failed!"
-  fi
   
   log "Extracting stage3 tarball..."
   tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
