@@ -698,7 +698,7 @@ download_stage3() {
   
   # Import Gentoo release keys
   log "Importing Gentoo release keys..."
-  wget -q -O /tmp/gentoo-keys.asc "${GENTOO_MIRROR}/releases/gentoo-keys.asc" \
+  wget -q -O /tmp/gentoo-keys.asc "${GENTOO_MIRROR}/gentoo-keys.asc" \
       || die "Failed to download Gentoo release keys"
   gpg --import /tmp/gentoo-keys.asc 2>/dev/null \
       || warn "GPG key import failed (continuing with caution)"
