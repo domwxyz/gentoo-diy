@@ -87,6 +87,16 @@ select_from_menu() {
   done
 }
 
+safe_replace() {
+  local placeholder="$1"
+  local value="$2"
+  local file="$3"
+  
+  local escaped_value=$(printf '%s\n' "$value" | sed 's/\\/\\\\/g; s/\//\\\//g; s/&/\\&/g')
+  
+  sed -i "s|$placeholder|$escaped_value|g" "$file"
+}
+
 ########################  UI FUNCTIONS  ##############################
 welcome_banner() {
   local width=60  # Width of the content area (excluding asterisks)
@@ -605,16 +615,20 @@ partition_disk() {
   printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
   echo # Blank line for separation
 
+  if [[ ! -d /sys/firmware/efi ]] && [[ $(lsblk -no PTTYPE "$DISK") == dos ]]; then
+    echo "▶ Marking /boot partition (index $BOOT_PART_NUM on $DISK) as active"
+    parted -s "$DISK" set "$BOOT_PART_NUM" boot on
+  fi
+
   # Format partitions
   log "Formatting partitions..."
   [[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
 
   mkswap "$SWP"
-  if [[ $FSTYPE == ext4 ]]; then
-    mkfs.ext4 -L gentoo "$ROOT"
-  else
-    mkfs.btrfs -L gentoo "$ROOT"
-  fi
+  case $FSTYPE in
+    ext4)  mkfs.ext4  -L gentoo "$ROOT" ;;
+    btrfs) mkfs.btrfs -L gentoo "$ROOT" ;;
+  esac
 
   if [[ $UEFI == yes ]]; then
     ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
@@ -648,13 +662,50 @@ download_stage3() {
   stage3_url=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
                | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
                || die "Unable to parse stage3 manifest"
-
+  
+  local stage3_base_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
+  local stage3_base_path="/mnt/gentoo/stage3"
+  
   log "Downloading latest stage3: ${stage3_url}"
-  wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
-      "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
+  wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}" \
+      || die "Failed to download stage3 tarball"
+      
+  # Download DIGESTS file
+  log "Downloading verification files..."
+  wget -q -O "${stage3_base_path}.tar.xz.DIGESTS" "${stage3_base_url}.DIGESTS" \
+      || die "Failed to download DIGESTS file"
+      
+  # Download GPG signature
+  wget -q -O "${stage3_base_path}.tar.xz.asc" "${stage3_base_url}.asc" \
+      || die "Failed to download GPG signature"
+  
+  # Import Gentoo release keys
+  log "Importing Gentoo release keys..."
+  wget -q -O /tmp/gentoo-keys.asc "${GENTOO_MIRROR}/releases/gentoo-keys.asc" \
+      || die "Failed to download Gentoo release keys"
+  gpg --import /tmp/gentoo-keys.asc 2>/dev/null \
+      || warn "GPG key import failed (continuing with caution)"
+      
+  # Verify SHA256 checksum
+  log "Verifying SHA256 checksum..."
+  cd /mnt/gentoo
+  if grep -A1 SHA256 "${stage3_base_path}.tar.xz.DIGESTS" | grep -v SHA256 | \
+     grep "$(sha256sum "$(basename ${stage3_base_path}.tar.xz)" | awk '{print $1}')" > /dev/null; then
+    log "SHA256 checksum verified successfully"
+  else
+    die "SHA256 checksum verification failed!"
+  fi
+  
+  # Verify GPG signature
+  log "Verifying GPG signature..."
+  if gpg --verify "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz" 2>/dev/null; then
+    log "GPG signature verified successfully"
+  else
+    warn "GPG signature verification failed (continuing with caution)"
+  fi
   
   log "Extracting stage3 tarball..."
-  tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
+  tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
   
   # Copy resolv.conf for network connectivity inside chroot
@@ -1183,21 +1234,21 @@ execute_chroot() {
   local chroot_script="/mnt/gentoo/root/inside.sh"
   
   # System settings
-  sed -i "s|@@TZVAL@@|$TZ|" "$chroot_script"
-  sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$chroot_script"
-  sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$chroot_script"
-  sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$chroot_script"
-  sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$chroot_script"
-  sed -i "s|@@USERVAL@@|$USERNAME|" "$chroot_script"
+  safe_replace "@@TZVAL@@" "$TZ" "$chroot_script"
+  safe_replace "@@LOCALEVAL@@" "$LOCALE" "$chroot_script"
+  safe_replace "@@KBLAYOUT@@" "$KEYBOARD_LAYOUT" "$chroot_script"
+  safe_replace "@@KBVARIANT@@" "$KEYBOARD_VARIANT" "$chroot_script"
+  safe_replace "@@HOSTVAL@@" "$HOSTNAME" "$chroot_script"
+  safe_replace "@@USERVAL@@" "$USERNAME" "$chroot_script"
   
   # Hardware settings
-  sed -i "s|@@VIDEOSTR@@|$VC|" "$chroot_script"
-  sed -i "s|@@MCPKG@@|$MCPKG|" "$chroot_script"
+  safe_replace "@@VIDEOSTR@@" "$VC" "$chroot_script"
+  safe_replace "@@MCPKG@@" "$MCPKG" "$chroot_script"
   
   # Partition settings
-  sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$chroot_script"
-  sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$chroot_script"
-  sed -i "s|@@DISKVAL@@|$DISK|" "$chroot_script"
+  safe_replace "@@ESP_UUID@@" "$ESP_UUID" "$chroot_script"
+  safe_replace "@@SWP_UUID@@" "$SWP_UUID" "$chroot_script"
+  safe_replace "@@DISKVAL@@" "$DISK" "$chroot_script"
   
   # Installation options
   local kval
@@ -1206,21 +1257,21 @@ execute_chroot() {
     2) kval="manual" ;; 
     3) kval="manual_auto" ;;
   esac
-  sed -i "s|@@KVAL@@|$kval|" "$chroot_script"
+  safe_replace "@@KVAL@@" "$kval" "$chroot_script"
   
   local xval
   [[ $X_SERVER == [Yy]* ]] && xval="yes" || xval="no"
-  sed -i "s|@@XVAL@@|$xval|" "$chroot_script"
+  safe_replace "@@XVAL@@" "$xval" "$chroot_script"
   
   local grubtgt
   [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
-  sed -i "s|@@GRUBTGT@@|$grubtgt|" "$chroot_script"
+  safe_replace "@@GRUBTGT@@" "$grubtgt" "$chroot_script"
   
-  sed -i "s|@@FSTYPE@@|$FSTYPE|" "$chroot_script"
+  safe_replace "@@FSTYPE@@" "$FSTYPE" "$chroot_script"
   
   # Compilation settings
   local makeopts="-j$(nproc)"
-  sed -i "s|@@MAKEOPTS@@|$makeopts|" "$chroot_script"
+  safe_replace "@@MAKEOPTS@@" "$makeopts" "$chroot_script"
   
   log "Entering chroot environment..."
   chroot /mnt/gentoo /bin/bash /root/inside.sh
