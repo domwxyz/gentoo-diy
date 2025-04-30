@@ -125,7 +125,6 @@ welcome_banner() {
   echo
   printf "   %s\n" "$loading_msg"
   sleep 0.8
-  echo
 }
 
 ########################  SYSTEM CHECKS  ############################
@@ -245,7 +244,6 @@ detect_keyboard_layout() {
 detect_hardware() {
   section "Hardware detection"
   
-  # CPU detection
   log "Detecting CPU..."
   CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
   case "$CPU_VENDOR" in
@@ -264,7 +262,6 @@ detect_hardware() {
   esac
   info "CPU detected: $CPU_TYPE"
   
-  # GPU detection
   log "Detecting GPU..."
   GPU_LINE=$(lspci -nnk | grep -Ei 'VGA|3D')
   case "$GPU_LINE" in
@@ -287,7 +284,6 @@ detect_hardware() {
   esac
   info "GPU detected: $GPU_TYPE"
   
-  # Firmware type
   log "Detecting firmware type..."
   if [[ -d /sys/firmware/efi ]]; then
     UEFI="yes"
@@ -297,12 +293,10 @@ detect_hardware() {
     info "Firmware: Legacy BIOS"
   fi
   
-  # RAM detection for swap sizing
   log "Detecting available RAM..."
   RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
   info "RAM detected: ${RAM_GB}GB"
   
-  # Keyboard layout
   detect_keyboard_layout
 }
 
@@ -386,7 +380,6 @@ select_timezone() {
   echo -e "${cyn}Select your timezone:${nc}"
   PS3="Timezone #: "
   
-  # Create a temporary array with just the descriptions
   local descriptions=()
   for ((i=1; i<${#timezones[@]}; i+=2)); do
     descriptions+=("${timezones[i]} (${timezones[i-1]})")
@@ -421,7 +414,6 @@ configure_accounts() {
 configure_system() {
   log "Configuring system options..."
   
-  # X server
   echo -e "\n${cyn}X Server Configuration${nc}"
   ask X_SERVER "Install minimal X server support? (y/n)" "n"
   
@@ -432,19 +424,16 @@ configure_system() {
     info "X server will be installed with VIDEO_CARDS=\"$VC\""
   fi
   
-  # Kernel choice
   echo -e "\n${cyn}Kernel Configuration${nc}"
   echo "1) genkernel (menuconfig) - Automated kernel build with manual customization"
   echo "2) manual-interactive    - Completely manual kernel configuration"
   echo "3) manual-AUTO          - Automated kernel build with defaults"
   ask KMETHOD "Select kernel option (1-3)" "1"
   
-  # Swap size
   echo -e "\n${cyn}Swap Configuration${nc}"
   def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
   ask SWAPSIZE "Swap size in GiB" "$def_swap"
   
-  # Filesystem
   echo -e "\n${cyn}Filesystem Selection${nc}"
   echo "1) ext4 - Standard Linux filesystem (recommended for most users)"
   echo "2) btrfs - Advanced filesystem with snapshots and other features"
@@ -479,7 +468,6 @@ display_config_summary() {
   echo -e "${blu}GPU:${nc}              ${ylw}$GPU_TYPE${nc}"
   echo -e "${blu}Firmware:${nc}         ${ylw}$([[ $UEFI == "yes" ]] && echo "UEFI" || echo "BIOS")${nc}"
   
-  # Confirmation
   echo
   ask CONFIRM "Does this configuration look correct? (y/n)" "y"
   if [[ $CONFIRM != [Yy]* ]]; then
@@ -515,14 +503,12 @@ select_disk() {
   local default_disk=""
   [[ ${#disk_options[@]} -eq 1 ]] && default_disk="${disk_options[0]}"
   
-  # Show the disk descriptions in the menu
   echo -e "${cyn}Available disks:${nc}"
   for i in "${!disk_descriptions[@]}"; do
     echo "  $((i+1))) ${disk_descriptions[$i]}"
   done
   echo
   
-  # Ask for disk selection with default if only one disk
   ask DISK_CHOICE "Enter disk number" "${default_disk:+1}"
   
   # Validate and process the choice
@@ -554,7 +540,6 @@ select_disk() {
   echo -e "         All existing partitions and data will be permanently deleted."
   echo
 
-  # Use the ask function with a default of "n" (safer option)
   ask DISK_CONFIRM "Proceed with erasing all data on this disk? (y/n)" "n"
 
   if [[ $DISK_CONFIRM == [Yy]* ]]; then
@@ -631,7 +616,6 @@ partition_disk() {
     mkfs.btrfs -L gentoo "$ROOT"
   fi
 
-  # Get UUIDs
   if [[ $UEFI == yes ]]; then
     ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
   else
@@ -639,7 +623,6 @@ partition_disk() {
   fi
   SWP_UUID="$(blkid -s UUID -o value "$SWP")"
   
-  # Mount filesystems
   log "Mounting filesystems..."
   mkdir -p /mnt/gentoo
   mount "$ROOT" /mnt/gentoo
@@ -649,7 +632,6 @@ partition_disk() {
   [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
   swapon "$SWP"
 
-  # Setup cleanup trap
   cleanup() {
     umount -lR /mnt/gentoo 2>/dev/null || true
     [ -n "${SWP:-}" ] && swapoff "$SWP" 2>/dev/null || true
@@ -697,7 +679,6 @@ prepare_chroot() {
   openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
   openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
   
-  # Clear passwords from memory for security
   unset ROOT_PASS USER_PASS
 }
 
@@ -705,7 +686,6 @@ prepare_chroot() {
 create_chroot_script() {
   local chroot_script="/mnt/gentoo/root/inside.sh"
   
-  # Create the chroot script
   cat > "$chroot_script" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1199,7 +1179,6 @@ EOS
 execute_chroot() {
   section "Chroot execution"
   
-  # Replace placeholders in the chroot script
   log "Preparing variables for chroot environment..."
   local chroot_script="/mnt/gentoo/root/inside.sh"
   
@@ -1243,9 +1222,8 @@ execute_chroot() {
   local makeopts="-j$(nproc)"
   sed -i "s|@@MAKEOPTS@@|$makeopts|" "$chroot_script"
   
-  # Execute the chroot script
   log "Entering chroot environment..."
-  chroot /mnt/gentoo /bin/bash -x /root/inside.sh
+  chroot /mnt/gentoo /bin/bash /root/inside.sh
 }
 
 ########################  CLEANUP AND FINALIZATION  ###################
