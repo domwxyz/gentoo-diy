@@ -692,17 +692,6 @@ download_stage3() {
   wget -q -O "${stage3_base_path}.tar.xz.DIGESTS" "${stage3_base_url}.DIGESTS" \
       || die "Failed to download DIGESTS file"
       
-  # Download GPG signature
-  wget -q -O "${stage3_base_path}.tar.xz.asc" "${stage3_base_url}.asc" \
-      || die "Failed to download GPG signature"
-  
-  # Import Gentoo release keys
-  log "Importing Gentoo release keys..."
-  wget -q -O /tmp/gentoo-keys.asc "${GENTOO_MIRROR}/gentoo-keys.asc" \
-      || die "Failed to download Gentoo release keys"
-  gpg --import /tmp/gentoo-keys.asc 2>/dev/null \
-      || warn "GPG key import failed (continuing with caution)"
-      
   # Verify SHA256 checksum
   log "Verifying SHA256 checksum..."
   cd /mnt/gentoo
@@ -711,14 +700,6 @@ download_stage3() {
     log "SHA256 checksum verified successfully"
   else
     die "SHA256 checksum verification failed!"
-  fi
-  
-  # Verify GPG signature
-  log "Verifying GPG signature..."
-  if gpg --verify "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz" 2>/dev/null; then
-    log "GPG signature verified successfully"
-  else
-    warn "GPG signature verification failed (continuing with caution)"
   fi
   
   log "Extracting stage3 tarball..."
