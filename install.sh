@@ -4,8 +4,8 @@
 #  • Built for a simple, barebones Gentoo install
 # =====================================================================
 set -euo pipefail
-trap 'printf "${red}❌  Error on line %d - exiting\n" "$LINENO" >&2' ERR
-IFS=$'\n\t'
+LOG_FILE="gentoo_install_$(date +%Y%m%d_%H%M%S).log"
+echo "=== Gentoo dot DIY Installer Log - $(date) ===" > "$LOG_FILE"
 
 ########################  CONFIGURATION  ##############################
 # User can override with:  MIRROR=https://some.mirror ./install.sh
@@ -19,12 +19,35 @@ else
   nc=''; red=''; grn=''; ylw=''; blu=''; mag=''; cyn='';
 fi
 
+trap 'printf "${red}❌ Error on line %d - exiting\n" "$LINENO" >&2; echo "❌ Error on line $LINENO - exiting" >> "$LOG_FILE"; exit 1' ERR
+IFS=$'\n\t'
+
 # Feedback functions
-log()  { printf "${grn}▶ %s${nc}\n"  "$*"; }
-info() { printf "${cyn}ℹ %s${nc}\n"  "$*"; }
-warn() { printf "${ylw}⚠ %s${nc}\n"  "$*"; }
-die()  { printf "${red}❌ %s${nc}\n" "$*"; exit 1; }
-hr()   { printf '%*s\n' "${1:-$(tput cols)}" '' | tr ' ' '─'; }
+log()  { printf "${grn}▶ %s${nc}\n" "$*"; echo "▶ $*" >> "$LOG_FILE"; }
+info() { printf "${cyn}ℹ %s${nc}\n" "$*"; echo "ℹ $*" >> "$LOG_FILE"; }
+warn() { printf "${ylw}⚠ %s${nc}\n" "$*"; echo "⚠ $*" >> "$LOG_FILE"; }
+die()  { printf "${red}❌ %s${nc}\n" "$*"; echo "❌ $*" >> "$LOG_FILE"; exit 1; }
+hr()   { local line=$(printf '%*s\n' "${1:-$(tput cols)}" '' | tr ' ' '─'); echo "$line"; echo "$line" >> "$LOG_FILE"; }
+
+cleanup() {
+  ec=$? # save the status that triggered EXIT
+  log "Running filesystem cleanup…"
+
+  for mp in /mnt/gentoo/dev /mnt/gentoo/proc /mnt/gentoo/sys; do
+    mountpoint -q "$mp" && umount -l "$mp"
+  done
+  mountpoint -q /mnt/gentoo && umount -R /mnt/gentoo
+  [[ -n ${SWP:-} ]] && swapoff "$SWP" 2>/dev/null || true
+  [[ -n ${CRYPT_NAME:-} ]] && cryptsetup close "$CRYPT_NAME" 2>/dev/null || true
+
+  if (( ec != 0 )); then
+    warn "Aborted with exit $ec; environment cleaned."
+  else
+    log  "Cleanup complete - install finished successfully."
+  fi
+  exit "$ec"
+}
+trap cleanup EXIT INT TERM
 
 # Command helpers
 need() { command -v "$1" &>/dev/null || die "Missing tool: $1"; }
@@ -616,8 +639,8 @@ partition_disk() {
   echo # Blank line for separation
 
   if [[ ! -d /sys/firmware/efi ]] && [[ $(lsblk -no PTTYPE "$DISK") == dos ]]; then
-    echo "▶ Marking /boot partition (index $BOOT_PART_NUM on $DISK) as active"
-    parted -s "$DISK" set "$BOOT_PART_NUM" boot on
+    log "Marking root partition (index 2 on $DISK) as active"
+    parted -s "$DISK" set 2 boot on
   fi
 
   # Format partitions
@@ -645,12 +668,6 @@ partition_disk() {
   mkdir -p /mnt/gentoo/boot
   [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
   swapon "$SWP"
-
-  cleanup() {
-    umount -lR /mnt/gentoo 2>/dev/null || true
-    [ -n "${SWP:-}" ] && swapoff "$SWP" 2>/dev/null || true
-  }
-  trap cleanup EXIT INT TERM
 }
 
 ########################  STAGE3 DOWNLOAD  #############################
