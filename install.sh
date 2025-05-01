@@ -707,29 +707,42 @@ download_stage3() {
   log "Verifying stage3 tarball integrity..."
   # Verify SHA256 checksum first (faster than GPG)
   if [[ -f "${stage3_base_path}.tar.xz.sha256" ]]; then
-    local expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | awk '{print $1}')
     local actual_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
+    local expected_sha256
     
-    if [[ "$expected_sha256" != "$actual_sha256" ]]; then
-      die "SHA256 checksum verification failed! Expected: $expected_sha256, Got: $actual_sha256"
+    # Check if the sha256 file is a PGP signed message or plain hash
+    if grep -q "BEGIN PGP SIGNED MESSAGE" "${stage3_base_path}.tar.xz.sha256"; then
+      # Extract the hash from a PGP signed message
+      expected_sha256=$(grep -A 2 "Hash:" "${stage3_base_path}.tar.xz.sha256" | grep -v "Hash:" | head -1 | tr -d '[:space:]')
+    else
+      # Plain hash file, just get the first word
+      expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | awk '{print $1}')
     fi
-    log "SHA256 checksum verified successfully"
+    
+    if [[ -z "$expected_sha256" ]]; then
+      warn "Could not parse SHA256 hash from the verification file"
+    elif [[ "$expected_sha256" != "$actual_sha256" ]]; then
+      die "SHA256 checksum verification failed! Expected: $expected_sha256, Got: $actual_sha256"
+    else
+      log "SHA256 checksum verified successfully"
+    fi
   else
     warn "SHA256 file not available, skipping checksum verification"
   fi
   
   # Import Gentoo Release Engineering GPG keys
   log "Importing Gentoo Release Engineering GPG keys..."
-  # Download current keys from Gentoo keyserver
-  mkdir -p /tmp/gentoo-keys
+  # Create a temporary gpg home directory
+  mkdir -p /tmp/gentoo-gpg
+  chmod 700 /tmp/gentoo-gpg
   
   # Fetch the release engineering keys from Gentoo
-  wget -q --show-progress -O /tmp/gentoo-keys/release-keys.asc \
+  wget -q --show-progress -O /tmp/gentoo-keys.asc \
       "https://qa-reports.gentoo.org/output/gentoo-releng-gpg-key.asc" \
       || die "Failed to download Gentoo release engineering GPG keys"
   
   # Import the keys
-  gpg --homedir /tmp/gentoo-gpg --import /tmp/gentoo-keys/release-keys.asc &>/dev/null \
+  gpg --homedir /tmp/gentoo-gpg --import /tmp/gentoo-keys.asc &>/dev/null \
       || die "Failed to import Gentoo GPG keys"
   
   # Verify GPG signature
@@ -753,7 +766,7 @@ download_stage3() {
       --xattrs-include='*.*' --numeric-owner
   
   # Cleanup
-  rm -rf /tmp/gentoo-keys /tmp/gentoo-gpg
+  rm -rf /tmp/gentoo-keys.asc /tmp/gentoo-gpg
   
   # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
