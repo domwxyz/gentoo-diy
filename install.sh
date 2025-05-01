@@ -675,19 +675,72 @@ download_stage3() {
   section "Stage 3 tarball download"
   
   log "Fetching stage3 manifest..."
-  local stage3_url
-  stage3_url=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
-               | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
-               || die "Unable to parse stage3 manifest"
+  local stage3_manifest_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt"
+  local manifest_content=$(curl -fsSL "$stage3_manifest_url") || die "Failed to download stage3 manifest"
   
+  # Extract stage3 filename and checksums
+  local stage3_url=$(echo "$manifest_content" | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
+    || die "Unable to parse stage3 manifest"
   local stage3_base_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
   local stage3_base_path="/mnt/gentoo/stage3"
+  local stage3_filename=$(basename "$stage3_base_url")
+  local stage3_dir=$(dirname "$stage3_url")
   
-  log "Downloading latest stage3: ${stage3_url}"
+  log "Downloading latest stage3: ${stage3_filename}"
   wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}" \
-      || die "Failed to download stage3 tarball"
+    || die "Failed to download stage3 tarball"
   
-  log "Extracting stage3 tarball..."
+  # Download signature files
+  log "Downloading DIGESTS file for verification..."
+  local digests_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_dir}/DIGESTS"
+  wget -q -O "/tmp/stage3-DIGESTS" "$digests_url" \
+    || die "Failed to download DIGESTS file"
+  
+  log "Downloading GPG signature..."
+  local digests_asc_url="${digests_url}.asc"
+  wget -q -O "/tmp/stage3-DIGESTS.asc" "$digests_asc_url" \
+    || die "Failed to download DIGESTS signature"
+  
+  # Download and import Gentoo release keys
+  log "Importing Gentoo release signing keys..."
+  wget -q -O "/tmp/gentoo-keys.asc" "https://qa-reports.gentoo.org/output/service-keys.gpg" \
+    || die "Failed to download Gentoo release keys"
+  
+  # Create gpg home directory with proper permissions
+  mkdir -p "/tmp/gentoo-gpg"
+  chmod 700 "/tmp/gentoo-gpg"
+  
+  # Import keys
+  gpg --homedir "/tmp/gentoo-gpg" --import "/tmp/gentoo-keys.asc" &>/dev/null \
+    || die "Failed to import Gentoo release keys"
+  
+  # Verify the DIGESTS file signature
+  log "Verifying DIGESTS file signature..."
+  if ! gpg --homedir "/tmp/gentoo-gpg" --verify "/tmp/stage3-DIGESTS.asc" "/tmp/stage3-DIGESTS" &>/dev/null; then
+    die "GPG signature verification failed! The DIGESTS file might be compromised"
+  fi
+  log "GPG signature verification successful"
+  
+  # Extract and verify SHA512 checksum
+  log "Verifying SHA512 checksum..."
+  local expected_sha512=$(grep -A1 "SHA512 HASH" "/tmp/stage3-DIGESTS" | grep -E "^[[:alnum:]]{128}.*${stage3_filename}$" | awk '{print $1}')
+  
+  if [[ -z "$expected_sha512" ]]; then
+    die "Could not find SHA512 checksum for ${stage3_filename} in DIGESTS file"
+  fi
+  
+  local actual_sha512=$(sha512sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
+  
+  if [[ "$expected_sha512" != "$actual_sha512" ]]; then
+    die "SHA512 checksum verification failed! Expected: ${expected_sha512}, got: ${actual_sha512}"
+  fi
+  log "SHA512 checksum verification successful"
+  
+  # Clean up
+  rm -rf "/tmp/gentoo-gpg" "/tmp/stage3-DIGESTS" "/tmp/stage3-DIGESTS.asc" "/tmp/gentoo-keys.asc"
+  
+  # Extract the verified tarball
+  log "Extracting verified stage3 tarball..."
   tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
   
