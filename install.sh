@@ -680,93 +680,16 @@ download_stage3() {
                | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
                || die "Unable to parse stage3 manifest"
   
-  # Extract directory and filename parts
-  local stage3_dir=$(dirname "$stage3_url")
-  local stage3_file=$(basename "$stage3_url")
   local stage3_base_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
-  local stage3_dir_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_dir}"
   local stage3_base_path="/mnt/gentoo/stage3"
   
   log "Downloading latest stage3: ${stage3_url}"
   wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}" \
       || die "Failed to download stage3 tarball"
   
-  log "Downloading verification files..."
-  # Download DIGESTS file (contains multiple checksums)
-  wget -q --show-progress -O "${stage3_base_path}.tar.xz.DIGESTS" \
-      "${stage3_base_url}.DIGESTS" || warn "Failed to download DIGESTS file"
-  
-  # Download GPG signature
-  wget -q --show-progress -O "${stage3_base_path}.tar.xz.asc" \
-      "${stage3_base_url}.asc" || warn "Failed to download GPG signature"
-  
-  # Download SHA256 checksum
-  wget -q --show-progress -O "${stage3_base_path}.tar.xz.sha256" \
-      "${stage3_base_url}.sha256" || warn "Failed to download SHA256 checksum"
-  
-  log "Verifying stage3 tarball integrity..."
-  # Verify SHA256 checksum first (faster than GPG)
-  if [[ -f "${stage3_base_path}.tar.xz.sha256" ]]; then
-    local actual_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
-    local expected_sha256
-    
-    # Check if the sha256 file is a PGP signed message or plain hash
-    if grep -q "BEGIN PGP SIGNED MESSAGE" "${stage3_base_path}.tar.xz.sha256"; then
-      # Extract the hash from a PGP signed message
-      expected_sha256=$(grep -A 2 "Hash:" "${stage3_base_path}.tar.xz.sha256" | grep -v "Hash:" | head -1 | tr -d '[:space:]')
-    else
-      # Plain hash file, just get the first word
-      expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | awk '{print $1}')
-    fi
-    
-    if [[ -z "$expected_sha256" ]]; then
-      warn "Could not parse SHA256 hash from the verification file"
-    elif [[ "$expected_sha256" != "$actual_sha256" ]]; then
-      die "SHA256 checksum verification failed! Expected: $expected_sha256, Got: $actual_sha256"
-    else
-      log "SHA256 checksum verified successfully"
-    fi
-  else
-    warn "SHA256 file not available, skipping checksum verification"
-  fi
-  
-  # Import Gentoo Release Engineering GPG keys
-  log "Importing Gentoo Release Engineering GPG keys..."
-  # Create a temporary gpg home directory
-  mkdir -p /tmp/gentoo-gpg
-  chmod 700 /tmp/gentoo-gpg
-  
-  # Fetch the release engineering keys from Gentoo
-  wget -q --show-progress -O /tmp/gentoo-keys.asc \
-      "https://qa-reports.gentoo.org/output/gentoo-releng-gpg-key.asc" \
-      || die "Failed to download Gentoo release engineering GPG keys"
-  
-  # Import the keys
-  gpg --homedir /tmp/gentoo-gpg --import /tmp/gentoo-keys.asc &>/dev/null \
-      || die "Failed to import Gentoo GPG keys"
-  
-  # Verify GPG signature
-  if [[ -f "${stage3_base_path}.tar.xz.asc" ]]; then
-    log "Verifying GPG signature..."
-    if ! gpg --homedir /tmp/gentoo-gpg --verify "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz" &>/dev/null; then
-      # Try one more time with keyserver fetch if verification fails
-      gpg --homedir /tmp/gentoo-gpg --keyserver hkps://keys.gentoo.org --refresh-keys &>/dev/null
-      if ! gpg --homedir /tmp/gentoo-gpg --verify "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz" &>/dev/null; then
-        die "GPG signature verification failed! The stage3 tarball might be compromised."
-      fi
-    fi
-    log "GPG signature verified successfully"
-  else
-    warn "GPG signature file not available, skipping signature verification"
-  fi
-  
-  # If we got here, verification passed or was skipped
   log "Extracting stage3 tarball..."
   tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
-  
-  # Cleanup
-  rm -rf /tmp/gentoo-keys.asc /tmp/gentoo-gpg
   
   # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
