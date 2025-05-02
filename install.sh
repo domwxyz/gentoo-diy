@@ -680,16 +680,61 @@ download_stage3() {
                | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
                || die "Unable to parse stage3 manifest"
   
-  local stage3_base_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
+  local stage3_path=$(dirname "$stage3_url")
+  local stage3_file=$(basename "$stage3_url")
+  local stage3_base_url="${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_path}"
   local stage3_base_path="/mnt/gentoo/stage3"
   
-  log "Downloading latest stage3: ${stage3_url}"
-  wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}" \
+  log "Downloading latest stage3: ${stage3_file}"
+  wget -q --show-progress -O "${stage3_base_path}.tar.xz" "${stage3_base_url}/${stage3_file}" \
       || die "Failed to download stage3 tarball"
+      
+  log "Downloading signature and checksum files..."
+  wget -q -O "${stage3_base_path}.tar.xz.asc" "${stage3_base_url}/${stage3_file}.asc" \
+      || die "Failed to download GPG signature"
+  wget -q -O "${stage3_base_path}.tar.xz.sha256" "${stage3_base_url}/${stage3_file}.sha256" \
+      || die "Failed to download SHA256 checksum"
+  
+  log "Verifying SHA256 checksum..."
+  local expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | awk '{print $1}')
+  local calculated_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
+  
+  if [[ "$expected_sha256" != "$calculated_sha256" ]]; then
+    die "SHA256 checksum verification failed! The downloaded stage3 tarball may be corrupted or tampered with."
+  fi
+  
+  log "Importing Gentoo release GPG keys..."
+  # Create a temporary directory for GPG operations
+  local gpg_home=$(mktemp -d)
+  
+  # Try multiple methods to get the keys, in order of preference
+  if ! wget -q -O "${gpg_home}/gentoo-release.asc" "https://qa-reports.gentoo.org/output/service-keys.gpg"; then
+    warn "Could not download key bundle from Gentoo QA reports, trying keys.gentoo.org..."
+    if ! gpg --homedir "${gpg_home}" --keyserver hkps://keys.gentoo.org --recv-keys 0xA13D0EF1914E7A72; then
+      die "Failed to retrieve Gentoo release keys"
+    fi
+  else
+    gpg --homedir "${gpg_home}" --import "${gpg_home}/gentoo-release.asc" \
+        || die "Failed to import Gentoo release keys"
+  fi
+  
+  log "Verifying GPG signature..."
+  if ! gpg --homedir "${gpg_home}" --verify "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz"; then
+    rm -rf "${gpg_home}"
+    die "GPG signature verification failed! The stage3 tarball may be tampered with."
+  fi
+  
+  # Clean up GPG home directory
+  rm -rf "${gpg_home}"
+  
+  log "Verification successful! Stage3 tarball is authentic."
+  # Clean up downloaded verification files
+  rm -f "${stage3_base_path}.tar.xz.asc" "${stage3_base_path}.tar.xz.sha256"
   
   log "Extracting stage3 tarball..."
   tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
+
   
   # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
