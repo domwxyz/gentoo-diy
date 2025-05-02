@@ -472,6 +472,16 @@ configure_system() {
   echo "2) btrfs - Advanced filesystem with snapshots and other features"
   ask FS "Root filesystem (1-2)" "1"
   [[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
+
+  echo -e "\n${cyn}Home Partition Configuration${nc}"
+  echo "1) Single partition (/ only)      - Standard setup for most users"
+  echo "2) Separate /home partition       - Keeps user data separate from system"
+  ask HOME_PARTITION "Select home partition option (1-2)" "1"
+
+  if [[ $HOME_PARTITION == 2 ]]; then
+    echo "Root partition size will be fixed, remaining space for /home"
+    ask ROOTSIZE "Root (/) partition size in GiB" "25"
+  fi
 }
 
 configuration_wizard() {
@@ -497,6 +507,13 @@ display_config_summary() {
   echo -e "${blu}Kernel method:${nc}    ${ylw}$(case $KMETHOD in 1) echo "genkernel";; 2) echo "manual";; *) echo "automated";; esac)${nc}"
   echo -e "${blu}Swap Size:${nc}        ${ylw}${SWAPSIZE}GB${nc}"
   echo -e "${blu}Root Filesystem:${nc}  ${ylw}$FSTYPE${nc}"
+  if [[ $HOME_PARTITION == 2 ]]; then
+    echo -e "${blu}Home Partition:${nc}    ${ylw}Yes (separate /home)${nc}"
+    echo -e "${blu}Root Size:${nc}         ${ylw}${ROOTSIZE}GB${nc}"
+    echo -e "${blu}Home Size:${nc}         ${ylw}[remaining space]${nc}"
+  else
+    echo -e "${blu}Home Partition:${nc}    ${ylw}No (single root partition)${nc}"
+  fi
   echo -e "${blu}CPU:${nc}              ${ylw}$CPU_TYPE${nc}"
   echo -e "${blu}GPU:${nc}              ${ylw}$GPU_TYPE${nc}"
   echo -e "${blu}Firmware:${nc}         ${ylw}$([[ $UEFI == "yes" ]] && echo "UEFI" || echo "BIOS")${nc}"
@@ -590,11 +607,23 @@ partition_disk() {
     sgdisk --zap-all "$DISK"
     sgdisk -n1:0:+512M -t1:ef00 -c1:"EFI System" "$DISK"
     sgdisk -n2:0:+${SWAPSIZE}G -t2:8200 -c2:"swap" "$DISK"
-    sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+    
+    if [[ $HOME_PARTITION == 2 ]]; then
+      sgdisk -n3:0:+${ROOTSIZE}G -t3:8300 -c3:"rootfs" "$DISK"
+      sgdisk -n4:0:0        -t4:8300 -c4:"home" "$DISK"
+    else
+      sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+    fi
   else
     parted -s "$DISK" mklabel msdos
     parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
-    parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+    
+    if [[ $HOME_PARTITION == 2 ]]; then
+      parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" "$((SWAPSIZE + ROOTSIZE))GiB"
+      parted -s "$DISK" mkpart primary ext4 "$((SWAPSIZE + ROOTSIZE))GiB" 100%
+    else
+      parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+    fi
   fi
 
   log "Ensuring partitions are recognized..."
@@ -626,16 +655,29 @@ partition_disk() {
   SWP="${DISK}${P}2"
   ROOT="${DISK}${P}3"
 
-  # For MBR partitioning where partitions start at 1 instead of 0
-  if [[ $UEFI != yes ]]; then
-    SWP="${DISK}${P}1"
-    ROOT="${DISK}${P}2"
+  if [[ $HOME_PARTITION == 2 ]]; then
+    if [[ $UEFI == yes ]]; then
+      HOME="${DISK}${P}4"
+    else
+      HOME="${DISK}${P}3"
+    fi
+    
+    # Format home partition
+    log "Formatting /home partition..."
+    case $FSTYPE in
+      ext4)  mkfs.ext4  -L home "$HOME" ;;
+      btrfs) mkfs.btrfs -L home "$HOME" ;;
+    esac
+    
+    # Get home partition UUID for fstab
+    HOME_UUID="$(blkid -s UUID -o value "$HOME")"
   fi
 
   log "Disk partitioning complete:"
   [[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
   printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
   printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
+  [[ $HOME_PARTITION == 2 ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$HOME" "($FSTYPE)" "/home (User Data)"
   echo # Blank line for separation
 
   if [[ ! -d /sys/firmware/efi ]] && [[ $(lsblk -no PTTYPE "$DISK") == dos ]]; then
@@ -664,6 +706,11 @@ partition_disk() {
   mkdir -p /mnt/gentoo
   mount "$ROOT" /mnt/gentoo
   [[ $FSTYPE == btrfs ]] && btrfs subvolume create /mnt/gentoo/@ && umount /mnt/gentoo && mount -o subvol=@ "$ROOT" /mnt/gentoo
+
+  if [[ $HOME_PARTITION == 2 ]]; then
+    mkdir -p /mnt/gentoo/home
+    mount "$HOME" /mnt/gentoo/home
+  fi
 
   mkdir -p /mnt/gentoo/boot
   [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
@@ -803,6 +850,8 @@ KERNEL_PLACEHOLDER="@@KVAL@@"
 X_SERVER_PLACEHOLDER="@@XVAL@@"
 GRUBTARGET_PLACEHOLDER="@@GRUBTGT@@"
 FSTYPE_PLACEHOLDER="@@FSTYPE@@"
+HOME_PARTITION_PLACEHOLDER="@@HOME_PART@@"
+HOME_UUID_PLACEHOLDER="@@HOME_UUID@@"
 ESP_UUID_PLACEHOLDER="@@ESP_UUID@@"
 SWP_UUID_PLACEHOLDER="@@SWP_UUID@@"
 MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
@@ -1150,6 +1199,11 @@ LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}   
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
   fi
+  
+  # Add /home entry if separate partition was chosen
+  if [[ "${HOME_PARTITION_PLACEHOLDER}" == "yes" ]]; then
+    echo "UUID=${HOME_UUID_PLACEHOLDER}            /home           ${FSTYPE_PLACEHOLDER}    noatime         0 2" >> /etc/fstab
+  fi
 }
 
 ###############################################################
@@ -1313,6 +1367,16 @@ execute_chroot() {
   safe_replace "@@GRUBTGT@@" "$grubtgt" "$chroot_script"
   
   safe_replace "@@FSTYPE@@" "$FSTYPE" "$chroot_script"
+
+  local home_part
+  [[ $HOME_PARTITION == 2 ]] && home_part="yes" || home_part="no"
+  safe_replace "@@HOME_PART@@" "$home_part" "$chroot_script"
+
+  if [[ $HOME_PARTITION == 2 ]]; then
+    safe_replace "@@HOME_UUID@@" "$HOME_UUID" "$chroot_script"
+  else
+    safe_replace "@@HOME_UUID@@" "" "$chroot_script"
+  fi
   
   # Compilation settings
   local makeopts="-j$(nproc)"

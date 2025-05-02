@@ -14,6 +14,10 @@ A streamlined Gentoo Linux installer wizard for Intel/AMD64 systems that priorit
 - **NVMe suffix handling**, dynamic swap sizing, and proper partition detection
 - **Security** with UFW firewall enabled by default
 
+## Minimalist Design  
+This installer intentionally omits complex features like disk encryption or custom filesystems.  
+For advanced setups, follow the [Gentoo Handbook](https://wiki.gentoo.org/wiki/Handbook:AMD64) install.
+
 ## Quick Install
 
 ```bash
