@@ -696,9 +696,6 @@ download_stage3() {
       || die "Failed to download SHA256 checksum"
   
   log "Verifying SHA256 checksum..."
-  # Debug: Display SHA256 file contents to understand format
-  log "SHA256 file content format:"
-  cat "${stage3_base_path}.tar.xz.sha256" | head -2
 
   # The SHA256 file might have different formats - try multiple approaches
   # First look for a 64-character hex string (SHA256 hash)
@@ -709,12 +706,10 @@ download_stage3() {
   fi
 
   # If the SHA256 file contains the filename as well, it might be in BSD format
-  # which puts the hash after the filename, not before it
   if [[ ${#expected_sha256} -ne 64 ]]; then
     expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | head -1 | awk '{print $NF}')
   fi
 
-  # Calculate the actual checksum of our downloaded file
   calculated_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
 
   # Debug: Show both hashes for comparison
@@ -733,12 +728,9 @@ download_stage3() {
   # Create a temporary directory for GPG operations
   local gpg_home=$(mktemp -d)
   
-  # Try multiple methods to get the keys, in order of preference
   if ! wget -q -O "${gpg_home}/gentoo-release.asc" "https://qa-reports.gentoo.org/output/service-keys.gpg"; then
-    warn "Could not download key bundle from Gentoo QA reports, trying keys.gentoo.org..."
-    if ! gpg --homedir "${gpg_home}" --keyserver hkps://keys.gentoo.org --recv-keys 0xA13D0EF1914E7A72; then
-      die "Failed to retrieve Gentoo release keys"
-    fi
+    warn "Could not download key bundle from Gentoo QA reports"
+    die "Failed to retrieve Gentoo release keys"
   else
     gpg --homedir "${gpg_home}" --import "${gpg_home}/gentoo-release.asc" \
         || die "Failed to import Gentoo release keys"
@@ -760,7 +752,6 @@ download_stage3() {
   log "Extracting stage3 tarball..."
   tar xpf "${stage3_base_path}.tar.xz" -C /mnt/gentoo \
       --xattrs-include='*.*' --numeric-owner
-
   
   # Copy resolv.conf for network connectivity inside chroot
   cp -L /etc/resolv.conf /mnt/gentoo/etc/
