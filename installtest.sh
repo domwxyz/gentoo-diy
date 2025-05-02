@@ -1,98 +1,32 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  Gentoo "one‑curl" installer
-#  • Built for a simple, barebones Gentoo install
+#  Gentoo “one‑curl” installer
+#  Built for business class Intel/AMD64 laptops.
+#  • Kernel : genkernel  |  manual‑interactive  |  unattended‑manual
+#  • UEFI *or* legacy BIOS automatically detected
+#  • Auto‑detect: disks, CPU vendor (microcode), GPU (VIDEO_CARDS)
+#  • NVMe suffix handling, Wi‑Fi fallback, dynamic swap size
+#  • Ext4 (default) or Btrfs root filesystem
 # =====================================================================
 set -euo pipefail
 trap 'printf "${red}❌  Error on line %d - exiting\n" "$LINENO" >&2' ERR
 IFS=$'\n\t'
 
-########################  CONFIGURATION  ##############################
-# User can override with:  MIRROR=https://some.mirror ./install.sh
-GENTOO_MIRROR="${MIRROR:-https://distfiles.gentoo.org}"
-
-########################  SETUP & UTILITIES  ##########################
-# Terminal colors for feedback
+########################  cosmetics  ##################################
 if [[ -t 1 ]]; then
-  nc='\e[0m'; red='\e[31m'; grn='\e[32m'; ylw='\e[33m'; blu='\e[34m'; mag='\e[35m'; cyn='\e[36m'
+  nc='\e[0m'; red='\e[31m'; grn='\e[32m'; ylw='\e[33m'
 else
-  nc=''; red=''; grn=''; ylw=''; blu=''; mag=''; cyn='';
+  nc=''; red=''; grn=''; ylw='';
 fi
-
-# Feedback functions
 log()  { printf "${grn}▶ %s${nc}\n"  "$*"; }
-info() { printf "${cyn}ℹ %s${nc}\n"  "$*"; }
 warn() { printf "${ylw}⚠ %s${nc}\n"  "$*"; }
 die()  { printf "${red}❌ %s${nc}\n" "$*"; exit 1; }
-hr()   { printf '%*s\n' "${1:-$(tput cols)}" '' | tr ' ' '─'; }
 
-# Command helpers
-need() { command -v "$1" &>/dev/null || die "Missing tool: $1"; }
-
-# Input helpers
-ask() { # ask VAR "Prompt" "default"
-  local var="$1" msg="$2" def="${3-}" val
-  printf "${mag}? %s${nc}${def:+ [${def}]}: " "$msg"
-  read -r val
-  printf -v "$var" '%s' "${val:-$def}"
-}
-
-ask_pw() {
-  local var="$1" msg="$2" val confirm
-  while true; do
-    printf "${mag}? %s${nc}: " "$msg"
-    read -rs val
-    echo
-    printf "${mag}? Confirm %s${nc}: " "$msg"
-    read -rs confirm
-    echo
-    if [[ "$val" == "$confirm" ]]; then
-      printf -v "$var" '%s' "$val"
-      break
-    else
-      echo "Passwords don't match. Please try again."
-    fi
-  done
-}
-
-section() {
-  echo
-  hr
-  printf "${cyn}  %s  ${nc}\n" "$*"
-  hr
-  echo
-}
-
-# Select from menu helper
-select_from_menu() {
-  local var="$1" prompt="$2" 
-  shift 2
-  local options=("$@")
-  local option_count=${#options[@]}
-  
-  echo -e "${cyn}$prompt:${nc}"
-  for i in $(seq 0 $((option_count - 1))); do
-    echo "  $((i + 1)). ${options[$i]}"
-  done
-  
-  local selection
-  while true; do
-    read -rp "Enter selection [1-$option_count]: " selection
-    if [[ "$selection" =~ ^[0-9]+$ && "$selection" -ge 1 && "$selection" -le "$option_count" ]]; then
-      printf -v "$var" '%s' "${options[$((selection - 1))]}"
-      break
-    else
-      echo "Invalid selection. Please enter a number between 1 and $option_count."
-    fi
-  done
-}
-
-########################  UI FUNCTIONS  ##############################
 welcome_banner() {
   local width=60  # Width of the content area (excluding asterisks)
   local title="G E N T O O   D O T   D I Y"
   local subtitle="One-Curl Gentoo Installer Wizard"
-  local loading_msg="Setting up user preference selection..."
+  local loading_msg="Auto-detecting hardware for optimal install..."
   
   local border_line=$(printf '%*s' "$((width + 4))" '' | tr ' ' '*')
   
@@ -128,40 +62,83 @@ welcome_banner() {
   echo
 }
 
-########################  SYSTEM CHECKS  ############################
-check_requirements() {
-  section "System requirements"
-  
-  log "Verifying required tools..."
-  for bin in curl wget sgdisk lsblk lspci lscpu awk openssl; do 
-    need "$bin"
+########################  helpers  ####################################
+need() { command -v "$1" &>/dev/null || die "Missing tool: $1"; }
+ask() { # ask VAR "Prompt" "default"
+  local var="$1" msg="$2" def="${3-}" val
+  read -rp "${msg}${def:+ [${def}]}: " val
+  printf -v "$var" '%s' "${val:-$def}"
+}
+ask_pw() {
+  local var="$1" msg="$2" val confirm
+  while true; do
+    read -rsp "${msg}: " val
+    echo
+    read -rsp "Confirm ${msg}: " confirm
+    echo
+    if [[ "$val" == "$confirm" ]]; then
+      printf -v "$var" '%s' "$val"
+      break
+    else
+      echo "Passwords don't match. Please try again."
+    fi
   done
-  
-  # Ensure we're reading from terminal
-  exec < /dev/tty
-  
-  # Sync clock
-  log "Synchronising clock..."
-  (ntpd -q -g || chronyd -q) &>/dev/null || warn "NTP sync failed (continuing)"
 }
 
-########################  NETWORK SETUP  ############################
-check_network() {
-  section "Network connectivity"
+########################  mirror selector  ############################
+# User can override with:  MIRROR=https://some.mirror ./install.sh
+GENTOO_MIRROR="${MIRROR:-https://distfiles.gentoo.org}"
+
+########################  required tools  #############################
+for bin in curl wget sgdisk lsblk lspci lscpu awk openssl; do need "$bin"; done
+
+exec < /dev/tty
+
+########################  welcome  ####################################
+
+welcome_banner
+log "Starting Gentoo dot DIY installer..."
+
+########################  sync clock  #################################
+log "Synchronising clock …"
+(ntpd -q -g || chronyd -q) &>/dev/null || warn "NTP sync failed (continuing)"
+
+########################  keyboard check  #############################
+detect_keyboard_layout() {
+  KEYBOARD_LAYOUT="us"
+  KEYBOARD_VARIANT=""
   
-  log "Checking internet connection..."
-  if ping -c1 -W2 1.1.1.1 &>/dev/null; then
-    log "Network is connected and working."
-    return 0
+  if [ -f /etc/conf.d/keymaps ]; then
+    KEYMAP=$(grep "^KEYMAP=" /etc/conf.d/keymaps | cut -d'"' -f2 | cut -d'=' -f2 || echo "us")
+  elif [ -f /etc/vconsole.conf ]; then
+    KEYMAP=$(grep "^KEYMAP=" /etc/vconsole.conf | cut -d'=' -f2 || echo "us")
+  else
+    KEYMAP="us"
   fi
   
-  warn "No network connectivity detected."
-  setup_wifi
+  if [ -f /etc/X11/xorg.conf.d/00-keyboard.conf ]; then
+    XKBLAYOUT=$(grep "XkbLayout" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "$KEYMAP")
+    XKBVARIANT=$(grep "XkbVariant" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "")
+  elif type setxkbmap >/dev/null 2>&1; then
+    XKBLAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}' || echo "$KEYMAP")
+    XKBVARIANT=$(setxkbmap -query 2>/dev/null | grep variant | awk '{print $2}' || echo "")
+  else
+    XKBLAYOUT="$KEYMAP"
+    XKBVARIANT=""
+  fi
+  
+  KEYBOARD_LAYOUT="${XKBLAYOUT:-$KEYMAP}"
+  KEYBOARD_VARIANT="${XKBVARIANT:-}"
+  
+  log "Detected keyboard layout: $KEYBOARD_LAYOUT${KEYBOARD_VARIANT:+ variant: $KEYBOARD_VARIANT}"
 }
 
-setup_wifi() {
-  info "Setting up wireless connection..."
-  
+detect_keyboard_layout
+
+########################  net check  ##################################
+if ! ping -c1 -W2 1.1.1.1 &>/dev/null; then
+  warn "No network connectivity detected."
+
   wifi_with_iwd() {
     local wlan_if ssid psk
     # Pick first wireless interface shown by iwd
@@ -194,7 +171,7 @@ setup_wifi() {
   }
 
   if command -v iwctl &>/dev/null; then
-    log "Launching interactive Wi-Fi setup via iwd..."
+    log "Launching interactive Wi-Fi setup via iwd…"
     wifi_with_iwd
   elif command -v wpa_cli &>/dev/null; then
     log "iwd not present → falling back to wpa_cli"
@@ -203,113 +180,13 @@ setup_wifi() {
     die "Neither iwctl nor wpa_cli present - aborting."
   fi
 
-  if ping -c1 -W4 1.1.1.1 &>/dev/null; then
-    log "Network connection established successfully."
-  else
-    die "Still offline after Wi-Fi attempt."
-  fi
-}
+  ping -c1 -W4 1.1.1.1 || die "Still offline after Wi-Fi attempt."
+fi
+log "Network OK."
+echo # Blank line for spacing
 
-########################  HARDWARE DETECTION  #######################
-detect_keyboard_layout() {
-  log "Detecting keyboard layout..."
-  
-  KEYBOARD_LAYOUT="us"
-  KEYBOARD_VARIANT=""
-  
-  if [ -f /etc/conf.d/keymaps ]; then
-    KEYMAP=$(grep "^KEYMAP=" /etc/conf.d/keymaps | cut -d'"' -f2 | cut -d'=' -f2 || echo "us")
-  elif [ -f /etc/vconsole.conf ]; then
-    KEYMAP=$(grep "^KEYMAP=" /etc/vconsole.conf | cut -d'=' -f2 || echo "us")
-  else
-    KEYMAP="us"
-  fi
-  
-  if [ -f /etc/X11/xorg.conf.d/00-keyboard.conf ]; then
-    XKBLAYOUT=$(grep "XkbLayout" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "$KEYMAP")
-    XKBVARIANT=$(grep "XkbVariant" /etc/X11/xorg.conf.d/00-keyboard.conf | awk '{print $2}' | tr -d '"' || echo "")
-  elif type setxkbmap >/dev/null 2>&1; then
-    XKBLAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}' || echo "$KEYMAP")
-    XKBVARIANT=$(setxkbmap -query 2>/dev/null | grep variant | awk '{print $2}' || echo "")
-  else
-    XKBLAYOUT="$KEYMAP"
-    XKBVARIANT=""
-  fi
-  
-  KEYBOARD_LAYOUT="${XKBLAYOUT:-$KEYMAP}"
-  KEYBOARD_VARIANT="${XKBVARIANT:-}"
-  
-  info "Keyboard layout: $KEYBOARD_LAYOUT${KEYBOARD_VARIANT:+ variant: $KEYBOARD_VARIANT}"
-}
-
-detect_hardware() {
-  section "Hardware detection"
-  
-  # CPU detection
-  log "Detecting CPU..."
-  CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
-  case "$CPU_VENDOR" in
-    GenuineIntel) 
-      MCPKG="sys-firmware/intel-microcode" 
-      CPU_TYPE="Intel"
-      ;;
-    AuthenticAMD) 
-      MCPKG="sys-kernel/linux-firmware"
-      CPU_TYPE="AMD"
-      ;;
-    *)            
-      MCPKG="" 
-      CPU_TYPE="Unknown"
-      ;;
-  esac
-  info "CPU detected: $CPU_TYPE"
-  
-  # GPU detection
-  log "Detecting GPU..."
-  GPU_LINE=$(lspci -nnk | grep -Ei 'VGA|3D')
-  case "$GPU_LINE" in
-    *Intel*)  
-      VC="intel i965 iris" 
-      GPU_TYPE="Intel"
-      ;;
-    *AMD*|*ATI*) 
-      VC="amdgpu radeonsi" 
-      GPU_TYPE="AMD"
-      ;;
-    *NVIDIA*) 
-      VC="nouveau" 
-      GPU_TYPE="NVIDIA"
-      ;;
-    *) 
-      VC="" 
-      GPU_TYPE="Unknown"
-      ;;
-  esac
-  info "GPU detected: $GPU_TYPE"
-  
-  # Firmware type
-  log "Detecting firmware type..."
-  if [[ -d /sys/firmware/efi ]]; then
-    UEFI="yes"
-    info "Firmware: UEFI"
-  else
-    UEFI="no"
-    info "Firmware: Legacy BIOS"
-  fi
-  
-  # RAM detection for swap sizing
-  log "Detecting available RAM..."
-  RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
-  info "RAM detected: ${RAM_GB}GB"
-  
-  # Keyboard layout
-  detect_keyboard_layout
-}
-
-########################  CONFIGURATION WIZARD  #######################
+########################  locale/timezone selection  ###########################
 select_locale() {
-  log "Configuring system locale..."
-  
   local locales=(
     "en_US.UTF-8"    "English (US)"
     "en_GB.UTF-8"    "English (UK)"
@@ -333,7 +210,7 @@ select_locale() {
     "tr_TR.UTF-8"    "Turkish"
   )
 
-  echo -e "${cyn}Select your preferred locale:${nc}"
+  echo "Select your preferred locale:"
   PS3="Locale #: "
   
   # Create a temporary array with just the descriptions
@@ -359,354 +236,251 @@ select_locale() {
 }
 
 select_timezone() {
-  log "Configuring timezone..."
+  echo "Enter your timezone (e.g. America/New_York, Europe/London):"
+  read -rp "Timezone: " TZ
   
-  local timezones=(
-    "Africa/Cairo"           "Egypt"
-    "America/Chicago"        "US Central"
-    "America/Denver"         "US Mountain"
-    "America/Los_Angeles"    "US Pacific"
-    "America/New_York"       "US Eastern"
-    "America/Mexico_City"    "Mexico"
-    "Asia/Hong_Kong"         "Hong Kong"
-    "Asia/Shanghai"          "China"
-    "Asia/Tokyo"             "Japan"
-    "Australia/Melbourne"    "Australia Eastern"
-    "Australia/Perth"        "Australia Western"
-    "Australia/Sydney"       "Australia (NSW)"
-    "Europe/Dublin"          "Ireland"
-    "Europe/London"          "United Kingdom"
-    "Europe/Madrid"          "Spain"
-    "Europe/Moscow"          "Russia"
-    "Europe/Paris"           "France"
-    "Pacific/Auckland"       "New Zealand"
-    "UTC"                    "Universal Time"
-  )
-
-  echo -e "${cyn}Select your timezone:${nc}"
-  PS3="Timezone #: "
+  if [[ -z "$TZ" ]]; then
+    # Default to UTC if nothing entered
+    TZ="UTC"
+  fi
   
-  # Create a temporary array with just the descriptions
-  local descriptions=()
-  for ((i=1; i<${#timezones[@]}; i+=2)); do
-    descriptions+=("${timezones[i]} (${timezones[i-1]})")
-  done
-  
-  select choice in "${descriptions[@]}" "Other (manual entry)"; do
-    if [[ $REPLY -gt 0 && $REPLY -le ${#descriptions[@]} ]]; then
-      # Convert reply to array index (accounting for 0-based indexing and pairs)
-      local idx=$(( (REPLY-1) * 2 ))
-      TZ="${timezones[idx]}"
-      log "Selected timezone: $TZ"
-      break
-    elif [[ "$choice" == "Other (manual entry)" ]]; then
-      ask TZ "Enter your timezone (e.g. America/New_York)" "UTC"
-      break
-    else
-      echo "Invalid selection. Please try again."
-    fi
-  done
+  log "Selected timezone: $TZ"
 }
 
-configure_accounts() {
-  log "Setting up system accounts..."
-  
-  ask HOSTNAME "Hostname" "gentoobox"
-  ask_pw ROOT_PASS "Root password"
-  echo # Blank line for spacing
-  ask USERNAME "Regular user name" "user"
-  ask_pw USER_PASS "Password for $USERNAME"
-}
+########################  gather generic answers  #####################
+select_locale
+echo # Blank line for spacing
+select_timezone
+echo # Blank line for spacing
+ask HOSTNAME "Hostname"                 "gentoobox"
+ask_pw ROOT_PASS "Root password"
+echo # Blank line for spacing
+ask USERNAME "Regular user name"        "user"
+ask_pw USER_PASS "Password for $USERNAME"
+echo # Blank line for spacing
 
-configure_system() {
-  log "Configuring system options..."
-  
-  # X server
-  echo -e "\n${cyn}X Server Configuration${nc}"
-  ask X_SERVER "Install minimal X server support? (y/n)" "n"
-  
-  if [[ $X_SERVER != [Yy]* ]]; then
-    VC=""
-    info "X server not selected - VIDEO_CARDS will be empty"
+########################  detect CPU / microcode  #####################
+CPU_VENDOR=$(lscpu | awk -F': *' '/Vendor ID/{print $2}')
+case "$CPU_VENDOR" in
+  GenuineIntel) MCPKG="sys-firmware/intel-microcode" ;;
+  AuthenticAMD) MCPKG="sys-kernel/linux-firmware"   ;;
+  *)            MCPKG="" ;;
+esac
+
+########################  detect GPU / VIDEO_CARDS ####################
+ask X_SERVER "Install minimal X server support? (y/n)" "n"
+
+GPU_LINE=$(lspci -nnk | grep -Ei 'VGA|3D')
+case "$GPU_LINE" in
+  *Intel*)  VC="intel i965 iris" ;;
+  *AMD*|*ATI*) VC="amdgpu radeonsi" ;;
+  *NVIDIA*) VC="nouveau" ;;
+  *) VC="" ;;
+esac
+
+if [[ $X_SERVER != [Yy]* ]]; then
+  VC=""
+  log "X server not selected - VIDEO_CARDS set to empty"
+fi
+
+echo # Blank line for spacing
+
+########################  kernel choices  ###################
+ask KMETHOD "Kernel: [1] genkernel(menuconfig)  [2] manual-interactive  [3] manual-AUTO" "1"
+
+########################  swap size (GiB)  ############################
+RAM_GB=$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo)
+def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
+ask SWAPSIZE "Swap size in GiB" "$def_swap"
+
+########################  firmware type  ################################
+if [[ -d /sys/firmware/efi ]]; then
+  UEFI="yes"
+  log "UEFI firmware detected."
+else
+  UEFI="no"
+  log "Legacy BIOS detected."
+fi
+
+########################  filesystem choice  ##########################
+ask FS "Root filesystem: [1] ext4  [2] btrfs" "1"
+[[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
+
+########################  detect disks  ###############################
+echo # Blank line for spacing
+log "Detecting installable disks …"
+mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE -P | grep -E 'NAME="/dev/(sd|nvme|vd)')
+[[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
+
+echo "Available disks:"
+for i in "${!DISKS[@]}"; do
+  echo "$((i+1)). ${DISKS[$i]}"
+done
+
+while true; do
+  read -rp "Enter disk number: " choice
+  if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#DISKS[@]} ]]; then
+    disk_line="${DISKS[$((choice-1))]}"
+    DISK=$(echo "$disk_line" | grep -o 'NAME="[^"]*"' | cut -d'"' -f2)
+    echo "Selected disk: $DISK"
+    break
   else
-    info "X server will be installed with VIDEO_CARDS=\"$VC\""
+    echo "Invalid selection. Please enter a number between 1 and ${#DISKS[@]}."
   fi
-  
-  # Kernel choice
-  echo -e "\n${cyn}Kernel Configuration${nc}"
-  echo "1) genkernel (menuconfig) - Automated kernel build with manual customization"
-  echo "2) manual-interactive    - Completely manual kernel configuration"
-  echo "3) manual-AUTO          - Automated kernel build with defaults"
-  ask KMETHOD "Select kernel option (1-3)" "1"
-  
-  # Swap size
-  echo -e "\n${cyn}Swap Configuration${nc}"
-  def_swap=$(( RAM_GB < 8 ? 2 : 4 ))
-  ask SWAPSIZE "Swap size in GiB" "$def_swap"
-  
-  # Filesystem
-  echo -e "\n${cyn}Filesystem Selection${nc}"
-  echo "1) ext4 - Standard Linux filesystem (recommended for most users)"
-  echo "2) btrfs - Advanced filesystem with snapshots and other features"
-  ask FS "Root filesystem (1-2)" "1"
-  [[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
-}
+done
 
-configuration_wizard() {
-  section "System configuration"
-  
-  select_locale
-  echo
-  select_timezone
-  echo
-  configure_accounts
-  echo
-  configure_system
-}
+[[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
 
-display_config_summary() {
-  section "Configuration summary"
-  
-  echo -e "${blu}System locale:${nc}    ${ylw}$LOCALE${nc}"
-  echo -e "${blu}Timezone:${nc}         ${ylw}$TZ${nc}"
-  echo -e "${blu}Hostname:${nc}         ${ylw}$HOSTNAME${nc}"
-  echo -e "${blu}Username:${nc}         ${ylw}$USERNAME${nc}"
-  echo -e "${blu}X Server:${nc}         ${ylw}$([[ $X_SERVER == [Yy]* ]] && echo "Yes" || echo "No")${nc}"
-  echo -e "${blu}Kernel method:${nc}    ${ylw}$(case $KMETHOD in 1) echo "genkernel";; 2) echo "manual";; *) echo "automated";; esac)${nc}"
-  echo -e "${blu}Swap Size:${nc}        ${ylw}${SWAPSIZE}GB${nc}"
-  echo -e "${blu}Root Filesystem:${nc}  ${ylw}$FSTYPE${nc}"
-  echo -e "${blu}CPU:${nc}              ${ylw}$CPU_TYPE${nc}"
-  echo -e "${blu}GPU:${nc}              ${ylw}$GPU_TYPE${nc}"
-  echo -e "${blu}Firmware:${nc}         ${ylw}$([[ $UEFI == "yes" ]] && echo "UEFI" || echo "BIOS")${nc}"
-  
-  # Confirmation
-  echo
-  ask CONFIRM "Does this configuration look correct? (y/n)" "y"
-  if [[ $CONFIRM != [Yy]* ]]; then
-    die "Installation aborted. Please restart the script to try again."
-  fi
-}
+########################  partition  ##################################
 
-########################  DISK SELECTION  #############################
-select_disk() {
-  section "Disk selection"
-  
-  log "Detecting installable disks..."
-  mapfile -t DISKS < <(lsblk -dpn -o NAME,SIZE,MODEL -x SIZE | grep -E '/dev/(sd|nvme|vd)')
-  [[ ${#DISKS[@]} -gt 0 ]] || die "No suitable block devices found."
-  
-  # Extract just the device paths for the menu (first column)
-  local disk_options=()
-  local disk_descriptions=()
-  for disk_line in "${DISKS[@]}"; do
-    local device=$(echo "$disk_line" | awk '{print $1}')
-    local size=$(echo "$disk_line" | awk '{print $2}')
-    local model=$(echo "$disk_line" | awk '{$1=$2=""; print substr($0,3)}' | sed 's/^ *//')
-    
-    disk_options+=("$device")
-    if [[ -n "$model" ]]; then
-      disk_descriptions+=("$device ($size - $model)")
-    else
-      disk_descriptions+=("$device ($size)")
-    fi
-  done
-  
-  # Default to first disk if there's only one
-  local default_disk=""
-  [[ ${#disk_options[@]} -eq 1 ]] && default_disk="${disk_options[0]}"
-  
-  # Show the disk descriptions in the menu
-  echo -e "${cyn}Available disks:${nc}"
-  for i in "${!disk_descriptions[@]}"; do
-    echo "  $((i+1))) ${disk_descriptions[$i]}"
-  done
-  echo
-  
-  # Ask for disk selection with default if only one disk
-  ask DISK_CHOICE "Enter disk number" "${default_disk:+1}"
-  
-  # Validate and process the choice
-  if [[ "$DISK_CHOICE" =~ ^[0-9]+$ && "$DISK_CHOICE" -ge 1 && "$DISK_CHOICE" -le ${#disk_options[@]} ]]; then
-    DISK="${disk_options[$((DISK_CHOICE-1))]}"
-    
-    # Get details for the selected disk
-    for disk_line in "${DISKS[@]}"; do
-      if [[ "$disk_line" == "$DISK"* ]]; then
-        DISK_SIZE=$(echo "$disk_line" | awk '{print $2}')
-        DISK_MODEL=$(echo "$disk_line" | awk '{$1=$2=""; print substr($0,3)}' | sed 's/^ *//')
-        break
-      fi
+log "Ready to partition ${DISK}"
+echo "WARNING: This will ERASE ALL DATA on ${DISK}"
+echo "         Size: $(lsblk -dn -o SIZE "${DISK}")"
+echo "         Model: $(lsblk -dn -o MODEL "${DISK}" 2>/dev/null || echo "unknown")"
+
+# Confirmation prompt with explicit warning
+while true; do
+    read -rp "Proceed with erasing all data on this disk? (yes/no): " disk_confirm
+    case $disk_confirm in
+        yes) break ;;
+        no) die "Installation aborted by user" ;;
+        *) echo "Please type 'yes' or 'no'" ;;
+    esac
+done
+
+log "Partitioning $DISK …"
+if [[ $UEFI == yes ]]; then
+  sgdisk --zap-all "$DISK"
+  sgdisk -n1:0:+512M -t1:ef00 -c1:"EFI System" "$DISK"
+  sgdisk -n2:0:+${SWAPSIZE}G -t2:8200 -c2:"swap" "$DISK"
+  sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+else
+  parted -s "$DISK" mklabel msdos
+  parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
+  parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+fi
+
+log "Ensuring partitions are recognized..."
+partprobe "$DISK"
+sleep 3
+
+# Double-check the partitions exist
+if [[ $UEFI == yes ]]; then
+  if [[ ! -e "${DISK}${P}3" ]]; then
+    log "Waiting for partitions to become available..."
+    for i in {1..10}; do
+      sleep 1
+      [[ -e "${DISK}${P}3" ]] && break
+      [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
     done
-    
-    echo -e "\n${ylw}Selected disk:${nc} $DISK"
-    echo -e "${ylw}Size:${nc} $DISK_SIZE"
-    [[ -n "$DISK_MODEL" ]] && echo -e "${ylw}Model:${nc} $DISK_MODEL"
-  else
-    die "Invalid disk selection: $DISK_CHOICE"
   fi
-
-  [[ $DISK =~ nvme ]] && P='p' || P=''   # NVMe partition suffix
-  log "Set partition suffix: '$P' for disk $DISK"
-  
-  # Confirmation prompt with explicit warning
-  echo
-  echo -e "${red}WARNING:${nc} This will ${red}ERASE ALL DATA${nc} on ${ylw}${DISK}${nc}"
-  echo -e "         All existing partitions and data will be permanently deleted."
-  echo
-
-  # Use the ask function with a default of "n" (safer option)
-  ask DISK_CONFIRM "Proceed with erasing all data on this disk? (y/n)" "n"
-
-  if [[ $DISK_CONFIRM == [Yy]* ]]; then
-    log "Disk confirmed for partitioning."
-  else
-    die "Installation aborted by user"
+else
+  if [[ ! -e "${DISK}${P}2" ]]; then
+    log "Waiting for partitions to become available..."
+    for i in {1..10}; do
+      sleep 1
+      [[ -e "${DISK}${P}2" ]] && break
+      [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
+    done
   fi
+fi
+
+ESP="${DISK}${P}1"
+SWP="${DISK}${P}2"
+ROOT="${DISK}${P}3"
+
+# For MBR partitioning where partitions start at 1 instead of 0
+if [[ $UEFI != yes ]]; then
+  SWP="${DISK}${P}1"
+  ROOT="${DISK}${P}2"
+fi
+
+log "Disk partitioning and formatting complete:"
+[[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
+printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
+echo # Blank line for separation
+
+[[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
+
+mkswap       "$SWP"
+if [[ $FSTYPE == ext4 ]]; then
+  mkfs.ext4 -L gentoo "$ROOT"
+else
+  mkfs.btrfs -L gentoo "$ROOT"
+fi
+
+if [[ $UEFI == yes ]]; then
+  ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
+else
+  ESP_UUID=""  # Empty for non-UEFI systems
+fi
+SWP_UUID="$(blkid -s UUID      -o value "$SWP")"
+
+mount "$ROOT" /mnt/gentoo
+[[ $FSTYPE == btrfs ]] && btrfs subvolume create /mnt/gentoo/@ && umount /mnt/gentoo && mount -o subvol=@ "$ROOT" /mnt/gentoo
+
+mkdir -p /mnt/gentoo/boot
+[[ $UEFI == yes ]] && mount "$ESP"  /mnt/gentoo/boot
+swapon "$SWP"
+
+cleanup() {
+  umount -lR /mnt/gentoo 2>/dev/null || true
+  [ -n "${SWP:-}" ] && swapoff "$SWP" 2>/dev/null || true
 }
+trap cleanup EXIT INT TERM
 
-partition_disk() {
-  section "Disk partitioning"
-  
-  log "Partitioning $DISK..."
-  if [[ $UEFI == yes ]]; then
-    sgdisk --zap-all "$DISK"
-    sgdisk -n1:0:+512M -t1:ef00 -c1:"EFI System" "$DISK"
-    sgdisk -n2:0:+${SWAPSIZE}G -t2:8200 -c2:"swap" "$DISK"
-    sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
-  else
-    parted -s "$DISK" mklabel msdos
-    parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
-    parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
-  fi
+########################  stage3  #####################################
+log "Fetching stage3 manifest …"
+STAGE=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
+        | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
+        || die "Unable to parse stage3 manifest"
 
-  log "Ensuring partitions are recognized..."
-  partprobe "$DISK"
-  sleep 3
+log "Downloading latest stage3: ${STAGE}"
+wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
+     "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE}"
 
-  # Double-check the partitions exist
-  if [[ $UEFI == yes ]]; then
-    if [[ ! -e "${DISK}${P}3" ]]; then
-      log "Waiting for partitions to become available..."
-      for i in {1..10}; do
-        sleep 1
-        [[ -e "${DISK}${P}3" ]] && break
-        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
-      done
+if command -v gpg &>/dev/null; then
+    ask VERIFY_STAGE3 "Verify stage3 tarball integrity? (y/n)" "n"
+    if [[ $VERIFY_STAGE3 == [Yy]* ]]; then
+        log "Verifying stage3 tarball integrity..."
+        
+        # Extract directory path from the stage3 path
+        STAGE_DIR=$(dirname "${STAGE}")
+        STAGE_FILE=$(basename "${STAGE}")
+        
+        # Download the DIGESTS file
+        wget -q --show-progress -O /mnt/gentoo/DIGESTS \
+             "${GENTOO_MIRROR}/releases/amd64/autobuilds/${STAGE_DIR}/DIGESTS"
+        
+        # Simple checksum verification
+        log "Verifying stage3 checksum..."
+        SHA512_EXPECTED=$(grep -A1 -E "${STAGE_FILE}" /mnt/gentoo/DIGESTS | grep -E "SHA512" | head -n1 | awk '{print $1}')
+        SHA512_ACTUAL=$(sha512sum /mnt/gentoo/stage3.tar.xz | awk '{print $1}')
+        
+        if [[ "$SHA512_EXPECTED" == "$SHA512_ACTUAL" ]]; then
+            log "✅ Stage3 tarball checksum verified"
+        else
+            warn "❌ Checksum verification failed!"
+            read -rp "Continue anyway? (y/n): " checksum_continue
+            [[ $checksum_continue != [Yy]* ]] && die "Installation aborted due to checksum mismatch"
+        fi
+    else
+        log "Skipping stage3 verification"
     fi
-  else
-    if [[ ! -e "${DISK}${P}2" ]]; then
-      log "Waiting for partitions to become available..."
-      for i in {1..10}; do
-        sleep 1
-        [[ -e "${DISK}${P}2" ]] && break
-        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
-      done
-    fi
-  fi
+else
+    log "GPG not available - skipping stage3 verification"
+fi
 
-  ESP="${DISK}${P}1"
-  SWP="${DISK}${P}2"
-  ROOT="${DISK}${P}3"
+tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
+    --xattrs-include='*.*' --numeric-owner
+cp -L /etc/resolv.conf /mnt/gentoo/etc/
 
-  # For MBR partitioning where partitions start at 1 instead of 0
-  if [[ $UEFI != yes ]]; then
-    SWP="${DISK}${P}1"
-    ROOT="${DISK}${P}2"
-  fi
+########################  bind mounts  ################################
+for fs in proc sys dev; do mount --rbind /$fs /mnt/gentoo/$fs; mount --make-rslave /mnt/gentoo/$fs; done
 
-  log "Disk partitioning complete:"
-  [[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
-  printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
-  printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
-  echo # Blank line for separation
-
-  # Format partitions
-  log "Formatting partitions..."
-  [[ $UEFI == yes ]] && mkfs.fat -F32 "$ESP"
-
-  mkswap "$SWP"
-  if [[ $FSTYPE == ext4 ]]; then
-    mkfs.ext4 -L gentoo "$ROOT"
-  else
-    mkfs.btrfs -L gentoo "$ROOT"
-  fi
-
-  # Get UUIDs
-  if [[ $UEFI == yes ]]; then
-    ESP_UUID="$(blkid -s PARTUUID -o value "$ESP" 2>/dev/null || true)"
-  else
-    ESP_UUID=""  # Empty for non-UEFI systems
-  fi
-  SWP_UUID="$(blkid -s UUID -o value "$SWP")"
-  
-  # Mount filesystems
-  log "Mounting filesystems..."
-  mkdir -p /mnt/gentoo
-  mount "$ROOT" /mnt/gentoo
-  [[ $FSTYPE == btrfs ]] && btrfs subvolume create /mnt/gentoo/@ && umount /mnt/gentoo && mount -o subvol=@ "$ROOT" /mnt/gentoo
-
-  mkdir -p /mnt/gentoo/boot
-  [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
-  swapon "$SWP"
-
-  # Setup cleanup trap
-  cleanup() {
-    umount -lR /mnt/gentoo 2>/dev/null || true
-    [ -n "${SWP:-}" ] && swapoff "$SWP" 2>/dev/null || true
-  }
-  trap cleanup EXIT INT TERM
-}
-
-########################  STAGE3 DOWNLOAD  #############################
-download_stage3() {
-  section "Stage 3 tarball download"
-  
-  log "Fetching stage3 manifest..."
-  local stage3_url
-  stage3_url=$(curl -fsSL "${GENTOO_MIRROR}/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" \
-               | grep -E '^[0-9]+T[0-9]+Z/stage3-.*\.tar\.xz' | awk '{print $1}') \
-               || die "Unable to parse stage3 manifest"
-
-  log "Downloading latest stage3: ${stage3_url}"
-  wget -q --show-progress -O /mnt/gentoo/stage3.tar.xz \
-      "${GENTOO_MIRROR}/releases/amd64/autobuilds/${stage3_url}"
-  
-  log "Extracting stage3 tarball..."
-  tar xpf /mnt/gentoo/stage3.tar.xz -C /mnt/gentoo \
-      --xattrs-include='*.*' --numeric-owner
-  
-  # Copy resolv.conf for network connectivity inside chroot
-  cp -L /etc/resolv.conf /mnt/gentoo/etc/
-}
-
-########################  CHROOT PREPARATION  ##########################
-prepare_chroot() {
-  section "Chroot environment preparation"
-  
-  log "Setting up bind mounts..."
-  for fs in proc sys dev; do 
-    mount --rbind /$fs /mnt/gentoo/$fs
-    mount --make-rslave /mnt/gentoo/$fs
-  done
-  
-  log "Creating chroot installation script..."
-  create_chroot_script
-  
-  # Handle passwords securely
-  log "Securely storing credentials for chroot environment..."
-  openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
-  openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
-  
-  # Clear passwords from memory for security
-  unset ROOT_PASS USER_PASS
-}
-
-########################  CHROOT SCRIPT CREATION  ######################
-create_chroot_script() {
-  local chroot_script="/mnt/gentoo/root/inside.sh"
-  
-  # Create the chroot script
-  cat > "$chroot_script" <<'EOS'
+########################  second‑stage (inside chroot)  ###############
+cat > /mnt/gentoo/root/inside.sh <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/profile
@@ -734,24 +508,23 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
-###############################################################
-#                      PORTAGE SETUP                          #
-###############################################################
-portage_configuration() {
-  echo "▶ Configuring Portage..."
-  # Create necessary directories for Portage configuration
-  mkdir -p /etc/portage/package.use
-  mkdir -p /etc/portage/package.license
-  mkdir -p /etc/portage/package.accept_keywords
-  mkdir -p /etc/portage/repos.conf
-  mkdir -p /var/db/repos/gentoo
+### PORTAGE CONFIGURATION - STEP 1 ###
+# Following Handbook Chapter 5 - Configuring Portage
 
-  # Set up firmware license acceptance
-  echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
-  echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+echo "▶ Configuring Portage..."
+# Create necessary directories for Portage configuration
+mkdir -p /etc/portage/package.use
+mkdir -p /etc/portage/package.license
+mkdir -p /etc/portage/package.accept_keywords
+mkdir -p /etc/portage/repos.conf
+mkdir -p /var/db/repos/gentoo
 
-  # Configure make.conf with detected hardware
-  cat >> /etc/portage/make.conf <<EOF
+# Set up firmware license acceptance
+echo "sys-kernel/linux-firmware linux-fw-redistributable" > /etc/portage/package.license/firmware
+echo "sys-kernel/linux-firmware ~amd64" > /etc/portage/package.accept_keywords/firmware
+
+# Configure make.conf with detected hardware
+cat >> /etc/portage/make.conf <<EOF
 # Compiler options
 MAKEOPTS="${MAKEOPTS_PLACEHOLDER}"
 
@@ -762,121 +535,114 @@ VIDEO_CARDS="${VIDEO_PLACEHOLDER}"
 USE="dbus udev ssl unicode usb -systemd"
 EOF
 
-  if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
-    cat >> /etc/portage/make.conf <<EOF
+if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
+  cat >> /etc/portage/make.conf <<EOF
 # X server USE flags
 USE="\${USE} X elogind acpi alsa"
 EOF
-  fi
+fi
 
-  # Add package-specific USE flags
-  mkdir -p /etc/portage/package.use
-  echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
-  echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
-  echo "app-text/xmlto text" > /etc/portage/package.use/xmlto
-}
+# Add package-specific USE flags
+mkdir -p /etc/portage/package.use
+echo "net-wireless/wpa_supplicant dbus" > /etc/portage/package.use/networkmanager
+echo "net-misc/networkmanager -wext" > /etc/portage/package.use/networkmanager
+echo "app-text/xmlto text" > /etc/portage/package.use/xmlto
 
-setup_repositories() {
-  echo "▶ Setting up Gentoo repositories..."
-  # Copy the Gentoo repository configuration
-  cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
+### REPOSITORY SETUP - STEP 2 ###
+# Following Handbook Chapter 5 - Installing the Gentoo repository
 
-  # Sync the repository using webrsync (most reliable method per handbook)
-  echo "▶ Syncing repository..."
-  emerge-webrsync
-}
+echo "▶ Setting up Gentoo repositories..."
+# Copy the Gentoo repository configuration
+cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
 
-select_profile() {
-  echo "▶ Selecting profile..."
-  eselect profile list
-  if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-    echo "Found standard AMD64 OpenRC profile #$profile_num"
+# Sync the repository using webrsync (most reliable method per handbook)
+echo "▶ Syncing repository..."
+emerge-webrsync
+
+### PROFILE SELECTION - STEP 3 ###
+# Following Handbook Chapter 6 - Choosing the right profile
+
+echo "▶ Selecting profile..."
+eselect profile list
+if profile_num=$(eselect profile list | grep -i "default/linux/amd64" | grep -v "systemd" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+  echo "Found standard AMD64 OpenRC profile #$profile_num"
+  eselect profile set "$profile_num"
+else
+  if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
+    echo "Found AMD64 profile #$profile_num"
     eselect profile set "$profile_num"
   else
-    if profile_num=$(eselect profile list | grep -i "amd64" | head -1 | grep -o '^\s*\[\s*[0-9]\+\s*\]' | grep -o '[0-9]\+'); then
-      echo "Found AMD64 profile #$profile_num"
-      eselect profile set "$profile_num"
-    else
-      echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
-      eselect profile list
-    fi
+    echo "No AMD64 profile found automatically. Please check profiles and set manually after install."
+    eselect profile list
   fi
-}
+fi
 
-###############################################################
-#                    SYSTEM CONFIGURATION                     #
-###############################################################
-configure_base_system() {
-  echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
-  echo "${TZ_PLACEHOLDER}" > /etc/timezone
-  emerge --config sys-libs/timezone-data
+### BASIC SYSTEM CONFIGURATION - STEP 4 ###
+# Following Handbook Chapter 8 - Configuring the system
 
-  echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
-  echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
-  locale-gen
-  eselect locale set ${LOCALE_PLACEHOLDER}
-  env-update && source /etc/profile
+echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
+echo "${TZ_PLACEHOLDER}" > /etc/timezone
+emerge --config sys-libs/timezone-data
 
-  echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
-  echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
-}
+echo "▶ Configuring locale to ${LOCALE_PLACEHOLDER}..."
+echo "${LOCALE_PLACEHOLDER} UTF-8" > /etc/locale.gen
+locale-gen
+eselect locale set ${LOCALE_PLACEHOLDER}
+env-update && source /etc/profile
 
-###############################################################
-#                     KERNEL INSTALLATION                     #
-###############################################################
-install_kernel() {
-  echo "▶ Installing kernel sources..."
-  emerge --quiet sys-kernel/gentoo-sources
-  eselect kernel set 1
+echo "▶ Setting hostname to ${HOST_PLACEHOLDER}..."
+echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 
-  case "${KERNEL_PLACEHOLDER}" in
+### KERNEL INSTALLATION - STEP 5 ###
+# Following Handbook Chapter 7 - Configuring the kernel
+
+echo "▶ Installing kernel sources..."
+emerge --quiet sys-kernel/gentoo-sources
+eselect kernel set 1
+
+case "${KERNEL_PLACEHOLDER}" in
     genkernel)
-      echo "▶ Installing genkernel and required tools..."
-      emerge --quiet sys-kernel/genkernel sys-apps/pciutils
-      echo "▶ Running genkernel with menuconfig..."
-      genkernel --menuconfig all
-      ;;
+        echo "▶ Installing genkernel and required tools..."
+        emerge --quiet sys-kernel/genkernel sys-apps/pciutils
+        echo "▶ Running genkernel with menuconfig..."
+        genkernel --menuconfig all
+        ;;
     manual_auto)
-      echo "▶ Building kernel with default configuration..."
-      cd /usr/src/linux
-      make defconfig
-      make -j$(nproc)
-      make modules_install install
-      ;;
+        echo "▶ Building kernel with default configuration..."
+        cd /usr/src/linux
+        make defconfig
+        make -j$(nproc)
+        make modules_install install
+        ;;
     manual)
-      echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
-      echo "⚠ You must compile and install the kernel before rebooting"
-      echo "⚠ For reference:"
-      echo "⚠   cd /usr/src/linux"
-      echo "⚠   make menuconfig"
-      echo "⚠   make -j$(nproc)"
-      echo "⚠   make modules_install install"
-      ;;
-  esac
-}
+        echo "⚠ MANUAL KERNEL CONFIGURATION SELECTED"
+        echo "⚠ You must compile and install the kernel before rebooting"
+        echo "⚠ For reference:"
+        echo "⚠   cd /usr/src/linux"
+        echo "⚠   make menuconfig"
+        echo "⚠   make -j$(nproc)"
+        echo "⚠   make modules_install install"
+        ;;
+esac
 
-###############################################################
-#                    FIRMWARE INSTALLATION                    #
-###############################################################
-install_firmware() {
-  echo "▶ Installing firmware packages..."
-  # Install microcode for CPU
-  if [[ -n "${MICROCODE_PLACEHOLDER}" ]]; then
+### FIRMWARE INSTALLATION - STEP 6 ###
+# Following Handbook Chapter 7 - Firmware
+
+echo "▶ Installing firmware packages..."
+# Install microcode for CPU
+if [[ -n "${MICROCODE_PLACEHOLDER}" ]]; then
     echo "▶ Installing CPU microcode: ${MICROCODE_PLACEHOLDER}"
     emerge --quiet "${MICROCODE_PLACEHOLDER}"
-  fi
+fi
 
-  # Always install linux-firmware for general hardware
-  echo "▶ Installing system firmware..."
-  emerge --quiet sys-kernel/linux-firmware
-}
+# Always install linux-firmware for general hardware
+echo "▶ Installing system firmware..."
+emerge --quiet sys-kernel/linux-firmware
 
-###############################################################
-#              HARDWARE DETECTION & OPTIMIZATION              #
-###############################################################
-detect_and_configure_hardware() {
-  # Laptop-specific tools and optimizations
-  if [ -d /sys/class/power_supply/BAT* ]; then
+### HARDWARE DETECTION AND OPTIMIZATION - STEP 6.5 ###
+
+# Laptop-specific tools and optimizations
+if [ -d /sys/class/power_supply/BAT* ]; then
     echo "▶ Laptop detected, installing power management..."
     emerge --quiet sys-power/tlp sys-power/powertop
     rc-update add tlp default
@@ -888,12 +654,12 @@ detect_and_configure_hardware() {
     
     # ThinkPad-specific configuration
     if echo "$SYSTEM_VENDOR $SYSTEM_PRODUCT" | grep -q "THINKPAD" || echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
-      echo "▶ ThinkPad detected, installing additional tools..."
-      emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
-      
-      # Basic thinkfan config
-      if [ ! -f /etc/thinkfan.conf ]; then
-        cat > /etc/thinkfan.conf <<THINKFAN
+        echo "▶ ThinkPad detected, installing additional tools..."
+        emerge --quiet app-laptop/thinkfan app-laptop/tp_smapi
+        
+        # Basic thinkfan config
+        if [ ! -f /etc/thinkfan.conf ]; then
+            cat > /etc/thinkfan.conf <<THINKFAN
 tp_fan /proc/acpi/ibm/fan
 hwmon /sys/class/thermal/thermal_zone0/temp
 
@@ -905,23 +671,23 @@ hwmon /sys/class/thermal/thermal_zone0/temp
 (5,     63,     85)
 (7,     68,     95)
 THINKFAN
-      fi
-      
-      rc-update add thinkfan default
-      
-      # Enable tp_smapi
-      echo "tp_smapi" > /etc/modules-load.d/tp_smapi.conf
+        fi
+        
+        rc-update add thinkfan default
+        
+        # Enable tp_smapi
+        echo "tp_smapi" > /etc/modules-load.d/tp_smapi.conf
     fi
     
     # Dell Latitude/Precision configuration
     if echo "$SYSTEM_VENDOR" | grep -q "DELL" && echo "$SYSTEM_PRODUCT" | grep -q -E "Latitude|Precision"; then
-      echo "▶ Dell Latitude/Precision detected, installing additional tools..."
-      emerge --quiet sys-power/thermald
-      rc-update add thermald default
-      
-      # Dell-specific power management
-      mkdir -p /etc/tlp.d/
-      echo "# Dell-specific power management settings
+        echo "▶ Dell Latitude/Precision detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
+        
+        # Dell-specific power management
+        mkdir -p /etc/tlp.d/
+        echo "# Dell-specific power management settings
 CPU_SCALING_GOVERNOR_ON_AC=performance
 CPU_SCALING_GOVERNOR_ON_BAT=powersave
 CPU_ENERGY_PERF_POLICY_ON_AC=performance
@@ -931,13 +697,13 @@ CPU_ENERGY_PERF_POLICY_ON_BAT=power
     
     # HP EliteBook/ProBook configuration
     if echo "$SYSTEM_VENDOR" | grep -q "HP" && echo "$SYSTEM_PRODUCT" | grep -q -E "EliteBook|ProBook"; then
-      echo "▶ HP EliteBook/ProBook detected, installing additional tools..."
-      emerge --quiet sys-power/thermald
-      rc-update add thermald default
-      
-      # HP-specific power management
-      mkdir -p /etc/tlp.d/
-      echo "# HP-specific power management settings
+        echo "▶ HP EliteBook/ProBook detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
+        
+        # HP-specific power management
+        mkdir -p /etc/tlp.d/
+        echo "# HP-specific power management settings
 CPU_SCALING_GOVERNOR_ON_AC=performance
 CPU_SCALING_GOVERNOR_ON_BAT=powersave
 PCIE_ASPM_ON_BAT=powersupersave
@@ -946,163 +712,145 @@ PCIE_ASPM_ON_BAT=powersupersave
     
     # Lenovo (non-ThinkPad) configuration
     if echo "$SYSTEM_VENDOR" | grep -q "LENOVO" && ! echo "$SYSTEM_PRODUCT" | grep -q "ThinkPad"; then
-      echo "▶ Lenovo laptop detected, installing additional tools..."
-      emerge --quiet sys-power/thermald
-      rc-update add thermald default
+        echo "▶ Lenovo laptop detected, installing additional tools..."
+        emerge --quiet sys-power/thermald
+        rc-update add thermald default
     fi
     
     echo "▶ Power management tools installed"
-  fi
+fi
 
-  # Check for virtualization environments
-  setup_virtualization
-
-  # Wi-Fi hardware detection and setup
-  configure_wifi
-}
-
-setup_virtualization() {
-  echo "▶ Checking for virtualization environment..."
-  if dmesg | grep -qi "virtualbox"; then
+# Check for virtualization environments
+echo "▶ Checking for virtualization environment..."
+if dmesg | grep -qi "virtualbox"; then
     echo "▶ VirtualBox detected, installing guest additions..."
     emerge --quiet app-emulation/virtualbox-guest-additions
     rc-update add virtualbox-guest-additions default
-  elif dmesg | grep -qi "qemu\|kvm"; then
+elif dmesg | grep -qi "qemu\|kvm"; then
     echo "▶ QEMU/KVM virtual machine detected, installing guest tools..."
     emerge --quiet app-emulation/qemu-guest-agent
     rc-update add qemu-guest-agent default
-  fi
-}
+fi
 
-configure_wifi() {
-  if lspci | grep -q -i 'network\|wireless'; then
+# Wi-Fi hardware detection and setup
+if lspci | grep -q -i 'network\|wireless'; then
     echo "▶ Wi-Fi hardware detected, installing drivers..."
     emerge --quiet net-wireless/iw net-wireless/wpa_supplicant net-wireless/iwd
     
     # Intel Wi-Fi
     if lspci | grep -i -E 'intel.*wifi|wireless.*intel' >/dev/null; then
-      echo "▶ Intel Wi-Fi detected..."
-      emerge --quiet sys-firmware/iwlwifi-firmware
+        echo "▶ Intel Wi-Fi detected..."
+        emerge --quiet sys-firmware/iwlwifi-firmware
     fi
     
     # Broadcom Wi-Fi
     if lspci | grep -i -E 'broadcom' >/dev/null; then
-      echo "▶ Broadcom Wi-Fi detected..."
-      emerge --quiet net-wireless/broadcom-sta
-      echo "wl" >> /etc/modules-load.d/broadcom.conf
+        echo "▶ Broadcom Wi-Fi detected..."
+        emerge --quiet net-wireless/broadcom-sta
+        echo "wl" >> /etc/modules-load.d/broadcom.conf
     fi
     
     # Configure NetworkManager to use iwd for Wi-Fi
     mkdir -p /etc/NetworkManager/conf.d/
     echo "[device]
 wifi.backend=iwd" > /etc/NetworkManager/conf.d/wifi_backend.conf
-  fi
-}
+fi
 
-###############################################################
-#                     SYSTEM TOOLS SETUP                      #
-###############################################################
-install_system_tools() {
-  echo "▶ Installing essential system tools..."
-  emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
-  rc-update add sysklogd default
+### SYSTEM TOOLS - STEP 7 ###
+# Following Handbook Chapter 8 - System tools
 
-  # Configure keyboard in console
-  echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
-  echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
-  rc-update add keymaps boot
+echo "▶ Installing essential system tools..."
+emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
+rc-update add sysklogd default
 
-  # For network management
-  echo "▶ Installing NetworkManager..."
-  emerge --quiet net-misc/networkmanager
-  rc-update add NetworkManager default
+# Configure keyboard in console
+echo "▶ Configuring keyboard layout to ${KEYBOARD_LAYOUT_PLACEHOLDER}..."
+echo "KEYMAP=\"${KEYBOARD_LAYOUT_PLACEHOLDER}\"" > /etc/conf.d/keymaps
+rc-update add keymaps boot
 
-  # Create a default NetworkManager connection config directory
-  mkdir -p /etc/NetworkManager/system-connections
-  chmod 700 /etc/NetworkManager/system-connections
+# For network management
+echo "▶ Installing NetworkManager..."
+emerge --quiet net-misc/networkmanager
+rc-update add NetworkManager default
 
-  # Install and enable SSH
-  emerge --quiet net-misc/openssh
-  rc-update add sshd default
+# Create a default NetworkManager connection config directory
+mkdir -p /etc/NetworkManager/system-connections
+chmod 700 /etc/NetworkManager/system-connections
 
-  # Simple firewall config
-  emerge --quiet net-firewall/ufw
-  rc-update add ufw default
-}
+# Install and enable SSH
+emerge --quiet net-misc/openssh
+rc-update add sshd default
 
-###############################################################
-#                    BOOTLOADER INSTALLATION                  #
-###############################################################
-install_bootloader() {
-  echo "▶ Installing and configuring bootloader..."
-  emerge --quiet sys-boot/grub:2
+# Simple firewall config
+emerge --quiet net-firewall/ufw
+rc-update add ufw default
 
-  # Install GRUB bootloader
-  if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+### BOOTLOADER INSTALLATION - STEP 8 ###
+# Following Handbook Chapter 10 - Configuring the bootloader
+
+echo "▶ Installing and configuring bootloader..."
+emerge --quiet sys-boot/grub:2
+
+# Install GRUB bootloader
+if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
     emerge --quiet sys-boot/efibootmgr
     echo "▶ Installing GRUB for UEFI system..."
     grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
-  else
+else
     echo "▶ Installing GRUB for BIOS system..."
     grub-install --target=i386-pc "${DISK_PLACEHOLDER}"
-  fi
+fi
 
-  # Generate GRUB configuration
-  echo "▶ Generating GRUB configuration..."
-  echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-  echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
-  grub-mkconfig -o /boot/grub/grub.cfg
-}
+# Generate GRUB configuration
+echo "▶ Generating GRUB configuration..."
+echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
+grub-mkconfig -o /boot/grub/grub.cfg
 
-###############################################################
-#                   FILESYSTEM CONFIGURATION                  #
-###############################################################
-configure_filesystem() {
-  echo "▶ Configuring filesystem..."
-  # Set up fstab
-  if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
-    cat > /etc/fstab <<FSTAB
+### FILESYSTEM CONFIGURATION - STEP 9 ###
+# Following Handbook Chapter 8 - Filesystem
+
+echo "▶ Configuring filesystem..."
+# Set up fstab
+if [[ "${GRUBTARGET_PLACEHOLDER}" == "x86_64-efi" ]]; then
+  cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
-  else
-    cat > /etc/fstab <<FSTAB
+else
+  cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
-  fi
-}
+fi
 
-###############################################################
-#                     USER ACCOUNT SETUP                      #
-###############################################################
-setup_user_accounts() {
-  echo "▶ Setting up user accounts..."
-  # Set root password
-  echo "root:${ROOT_HASH}" | chpasswd -e
+### USER ACCOUNTS - STEP 10 ###
+# Following Handbook Chapter 11 - User administration
 
-  # Create regular user
-  useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
-  echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
+echo "▶ Setting up user accounts..."
+# Set root password
+echo "root:${ROOT_HASH}" | chpasswd -e
 
-  # Configure sudo access
-  mkdir -p /etc/sudoers.d
-  echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
-  chmod 440 /etc/sudoers.d/wheel
+# Create regular user
+useradd -m -G users,wheel,audio,video,usb,cdrom,portage "${USER_PLACEHOLDER}"
+echo "${USER_PLACEHOLDER}:${USER_HASH}" | chpasswd -e
 
-  if dmesg | grep -qi "virtualbox"; then
+# Configure sudo access
+mkdir -p /etc/sudoers.d
+echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
+
+if dmesg | grep -qi "virtualbox"; then
     usermod -aG vboxguest "${USER_PLACEHOLDER}"
-  fi
-}
+fi
 
-###############################################################
-#                     X SERVER INSTALLATION                   #
-###############################################################
-install_x_server() {
-  if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
+### X SERVER (if selected) - STEP 11 ###
+# Only install minimal X server if requested
+
+if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
     echo "▶ Installing minimal X server..."
     emerge --quiet x11-base/xorg-server x11-base/xorg-drivers 
     
@@ -1117,7 +865,7 @@ EOF
 
     # Add variant if present
     if [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ]; then
-      echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
+        echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     fi
     
     echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
@@ -1125,178 +873,64 @@ EOF
     
     # Basic terminal and utilities for X
     emerge --quiet x11-terms/xterm x11-apps/xinit
-  fi
-}
+fi
 
-###############################################################
-#                        FINALIZATION                         #
-###############################################################
-perform_final_steps() {
-  # Common applications
-  echo "▶ Installing text editor..."
-  emerge --quiet app-editors/nano
+### FINAL TOUCHES - STEP 12 ###
 
-  echo "▶ Checking for important Gentoo news items..."
-  eselect news read new
+# Common applications
 
-  echo "▶ Performing final cleanup..."
-  emerge --depclean --quiet
+# Text editor
+emerge --quiet app-editors/nano
 
-  echo "🎉 Installation completed successfully!"
-  echo "🔄 You can now reboot into your new Gentoo system."
-}
+echo "▶ Checking for important Gentoo news items..."
+eselect news read new
 
-###############################################################
-#                      MAIN EXECUTION                         #
-###############################################################
-# Execute all installation steps in sequence
-main() {
-  # Portage setup
-  portage_configuration
-  setup_repositories
-  select_profile
-  
-  # Basic system configuration
-  configure_base_system
-  
-  # Kernel installation
-  install_kernel
-  
-  # Firmware installation
-  install_firmware
-  
-  # Hardware detection and configuration
-  detect_and_configure_hardware
-  
-  # System tools installation
-  install_system_tools
-  
-  # Bootloader installation
-  install_bootloader
-  
-  # Filesystem configuration
-  configure_filesystem
-  
-  # User account setup
-  setup_user_accounts
-  
-  # X server installation (if selected)
-  install_x_server
-  
-  # Final steps
-  perform_final_steps
-}
+echo "▶ Performing final cleanup..."
+emerge --depclean --quiet
 
-# Start the installation process
-main
+echo "🎉 Installation completed successfully!"
+echo "🔄 You can now reboot into your new Gentoo system."
 EOS
+chmod +x /mnt/gentoo/root/inside.sh
 
-  # Make the script executable
-  chmod +x "$chroot_script"
-}
+########################  substitute vars  ############################
+fh=/mnt/gentoo/root/inside.sh
+sed -i "s|@@TZVAL@@|$TZ|" "$fh"
+sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$fh"
+sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$fh"
+sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$fh"
+sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$fh"
+sed -i "s|@@USERVAL@@|$USERNAME|" "$fh"
+sed -i "s|@@VIDEOSTR@@|$VC|" "$fh"
+sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$fh"
+sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$fh"
+sed -i "s|@@MCPKG@@|$MCPKG|" "$fh"
+sed -i "s|@@DISKVAL@@|$DISK|" "$fh"
+case $KMETHOD in
+  1) kval="genkernel" ;; 2) kval="manual" ;; 3) kval="manual_auto" ;;
+esac
+sed -i "s|@@KVAL@@|$kval|" "$fh"
+[[ $X_SERVER == [Yy]* ]] && xval="yes" || xval="no"
+sed -i "s|@@XVAL@@|$xval|" "$fh"
+[[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
+sed -i "s|@@GRUBTGT@@|$grubtgt|" "$fh"
+sed -i "s|@@FSTYPE@@|$FSTYPE|" "$fh"
+MAKEOPTS="-j$(nproc)"
+sed -i "s|@@MAKEOPTS@@|$MAKEOPTS|" "$fh"
 
-########################  CHROOT EXECUTION  ##########################
-execute_chroot() {
-  section "Chroot execution"
-  
-  # Replace placeholders in the chroot script
-  log "Preparing variables for chroot environment..."
-  local chroot_script="/mnt/gentoo/root/inside.sh"
-  
-  # System settings
-  sed -i "s|@@TZVAL@@|$TZ|" "$chroot_script"
-  sed -i "s|@@LOCALEVAL@@|$LOCALE|" "$chroot_script"
-  sed -i "s|@@KBLAYOUT@@|$KEYBOARD_LAYOUT|" "$chroot_script"
-  sed -i "s|@@KBVARIANT@@|$KEYBOARD_VARIANT|" "$chroot_script"
-  sed -i "s|@@HOSTVAL@@|$HOSTNAME|" "$chroot_script"
-  sed -i "s|@@USERVAL@@|$USERNAME|" "$chroot_script"
-  
-  # Hardware settings
-  sed -i "s|@@VIDEOSTR@@|$VC|" "$chroot_script"
-  sed -i "s|@@MCPKG@@|$MCPKG|" "$chroot_script"
-  
-  # Partition settings
-  sed -i "s|@@ESP_UUID@@|$ESP_UUID|" "$chroot_script"
-  sed -i "s|@@SWP_UUID@@|$SWP_UUID|" "$chroot_script"
-  sed -i "s|@@DISKVAL@@|$DISK|" "$chroot_script"
-  
-  # Installation options
-  local kval
-  case $KMETHOD in
-    1) kval="genkernel" ;; 
-    2) kval="manual" ;; 
-    3) kval="manual_auto" ;;
-  esac
-  sed -i "s|@@KVAL@@|$kval|" "$chroot_script"
-  
-  local xval
-  [[ $X_SERVER == [Yy]* ]] && xval="yes" || xval="no"
-  sed -i "s|@@XVAL@@|$xval|" "$chroot_script"
-  
-  local grubtgt
-  [[ $UEFI == yes ]] && grubtgt="x86_64-efi" || grubtgt="i386-pc"
-  sed -i "s|@@GRUBTGT@@|$grubtgt|" "$chroot_script"
-  
-  sed -i "s|@@FSTYPE@@|$FSTYPE|" "$chroot_script"
-  
-  # Compilation settings
-  local makeopts="-j$(nproc)"
-  sed -i "s|@@MAKEOPTS@@|$makeopts|" "$chroot_script"
-  
-  # Execute the chroot script
-  log "Entering chroot environment..."
-  chroot /mnt/gentoo /bin/bash -x /root/inside.sh
-}
+openssl passwd -6 "$ROOT_PASS" > /mnt/gentoo/root/root_hash.txt
+openssl passwd -6 "$USER_PASS" > /mnt/gentoo/root/user_hash.txt
+unset ROOT_PASS USER_PASS
 
-########################  CLEANUP AND FINALIZATION  ###################
-cleanup_and_finalize() {
-  section "Cleanup and finalization"
-  
-  log "Unmounting filesystems..."
-  umount -l /mnt/gentoo/{dev,proc,sys} 2>/dev/null || true
-  umount -R /mnt/gentoo 2>/dev/null || true
-  swapoff "$SWP" 2>/dev/null || true
-  
-  if [[ $KMETHOD == 2 ]]; then
-    warn "You chose MANUAL-interactive kernel. Compile it before reboot!"
-  fi
-  
-  log "Installation complete!"
-  info "Remove the installation media and reboot to start using your new Gentoo system."
-  hr
-  echo "Thank you for using Gentoo dot DIY installer! 🚀"
-}
+########################  chroot  #####################################
+log "Entering chroot …"
+chroot /mnt/gentoo /bin/bash -x /root/inside.sh
 
-########################  MAIN EXECUTION  #############################
-main() {
-  # Check requirements and display welcome
-  welcome_banner
-  
-  # Check and setup network
-  check_requirements
-  check_network
-  
-  # Hardware detection
-  detect_hardware
-  
-  # User configuration
-  configuration_wizard
-  display_config_summary
+########################  cleanup  ####################################
+log "Cleaning up …"
+umount -l /mnt/gentoo/{dev,proc,sys} || true
+umount -R /mnt/gentoo
+swapoff "$SWP"
 
-  # Partition and format disk
-  select_disk
-  partition_disk
-  
-  # Download and extract stage3
-  download_stage3
-  
-  # Prepare chroot environment
-  prepare_chroot
-  execute_chroot
-  
-  # Cleanup and finalize
-  cleanup_and_finalize
-}
-
-# Start the installation
-main
+[[ $KMETHOD == 2 ]] && warn "You chose MANUAL-interactive kernel. Compile it before reboot!"
+log "Installation finished - remove the USB stick and reboot."
