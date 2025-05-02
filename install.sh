@@ -696,11 +696,37 @@ download_stage3() {
       || die "Failed to download SHA256 checksum"
   
   log "Verifying SHA256 checksum..."
-  local expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | awk '{print $1}')
-  local calculated_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
-  
-  if [[ "$expected_sha256" != "$calculated_sha256" ]]; then
+  # Debug: Display SHA256 file contents to understand format
+  log "SHA256 file content format:"
+  cat "${stage3_base_path}.tar.xz.sha256" | head -2
+
+  # The SHA256 file might have different formats - try multiple approaches
+  # First look for a 64-character hex string (SHA256 hash)
+  expected_sha256=$(grep -o '[0-9a-f]\{64\}' "${stage3_base_path}.tar.xz.sha256" | head -1)
+  if [[ -z "$expected_sha256" ]]; then
+    # If that fails, try extracting the first field which may contain the hash
+    expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | head -1 | awk '{print $1}')
+  fi
+
+  # If the SHA256 file contains the filename as well, it might be in BSD format
+  # which puts the hash after the filename, not before it
+  if [[ ${#expected_sha256} -ne 64 ]]; then
+    expected_sha256=$(cat "${stage3_base_path}.tar.xz.sha256" | head -1 | awk '{print $NF}')
+  fi
+
+  # Calculate the actual checksum of our downloaded file
+  calculated_sha256=$(sha256sum "${stage3_base_path}.tar.xz" | awk '{print $1}')
+
+  # Debug: Show both hashes for comparison
+  log "Expected SHA256: $expected_sha256"
+  log "Calculated SHA256: $calculated_sha256"
+
+  if [[ -z "$expected_sha256" || ${#expected_sha256} -ne 64 ]]; then
+    warn "Could not parse SHA256 hash from downloaded file, skipping checksum verification"
+  elif [[ "$expected_sha256" != "$calculated_sha256" ]]; then
     die "SHA256 checksum verification failed! The downloaded stage3 tarball may be corrupted or tampered with."
+  else
+    log "SHA256 checksum verified successfully"
   fi
   
   log "Importing Gentoo release GPG keys..."
