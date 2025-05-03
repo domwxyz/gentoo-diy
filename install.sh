@@ -810,6 +810,9 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
+echo "▶ Reading important Gentoo news items..."
+eselect news read new
+
 ###############################################################
 #                      PORTAGE SETUP                          #
 ###############################################################
