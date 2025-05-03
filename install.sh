@@ -810,9 +810,6 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
-echo "▶ Reading important Gentoo news items..."
-eselect news read new
-
 ###############################################################
 #                      PORTAGE SETUP                          #
 ###############################################################
@@ -863,6 +860,9 @@ setup_repositories() {
   # Sync the repository using webrsync (most reliable method per handbook)
   echo "▶ Syncing repository..."
   emerge-webrsync
+
+  echo "▶ Reading important Gentoo news items..."
+  eselect news read new
 }
 
 select_profile() {
