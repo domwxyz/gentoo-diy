@@ -21,7 +21,7 @@ For advanced setups, follow the [Gentoo Handbook](https://wiki.gentoo.org/wiki/H
 ## Quick Install
 
 ```bash
-curl -L https://gentoo.diy/install -o install
+curl https://gentoo.diy/install -o install
 chmod +x install
 ./install
 ```
