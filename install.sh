@@ -810,9 +810,7 @@ MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 
 echo "▶ Starting Gentoo installation inside chroot environment..."
 
-###############################################################
-#                      PORTAGE SETUP                          #
-###############################################################
+########################  PORTAGE SETUP  ##############################
 portage_configuration() {
   echo "▶ Configuring Portage..."
   # Create necessary directories for Portage configuration
@@ -882,9 +880,7 @@ select_profile() {
   fi
 }
 
-###############################################################
-#                    SYSTEM CONFIGURATION                     #
-###############################################################
+########################  SYSTEM CONFIGURATION  #######################
 configure_base_system() {
   echo "▶ Configuring timezone to ${TZ_PLACEHOLDER}..."
   echo "${TZ_PLACEHOLDER}" > /etc/timezone
@@ -900,9 +896,7 @@ configure_base_system() {
   echo "hostname=\"${HOST_PLACEHOLDER}\"" > /etc/conf.d/hostname
 }
 
-###############################################################
-#                     KERNEL INSTALLATION                     #
-###############################################################
+########################  KERNEL INSTALLATION  ########################
 install_kernel() {
   echo "▶ Installing kernel sources..."
   emerge --quiet sys-kernel/gentoo-sources
@@ -934,9 +928,7 @@ install_kernel() {
   esac
 }
 
-###############################################################
-#                    FIRMWARE INSTALLATION                    #
-###############################################################
+########################  FIRMWARE INSTALLATION  ######################
 install_firmware() {
   echo "▶ Installing firmware packages..."
   # Install microcode for CPU
@@ -950,9 +942,7 @@ install_firmware() {
   emerge --quiet sys-kernel/linux-firmware
 }
 
-###############################################################
-#              HARDWARE DETECTION & OPTIMIZATION              #
-###############################################################
+########################  HARDWARE DETECTION & OPTIMIZATION  ##########
 detect_and_configure_hardware() {
   # Laptop-specific tools and optimizations
   if [ -d /sys/class/power_supply/BAT* ]; then
@@ -1078,9 +1068,7 @@ wifi.backend=iwd" > /etc/NetworkManager/conf.d/wifi_backend.conf
   fi
 }
 
-###############################################################
-#                     SYSTEM TOOLS SETUP                      #
-###############################################################
+########################  SYSTEM TOOLS SETUP  #########################
 install_system_tools() {
   echo "▶ Installing essential system tools..."
   emerge --quiet app-admin/sudo app-admin/sysklogd net-misc/dhcpcd
@@ -1109,9 +1097,7 @@ install_system_tools() {
   rc-update add ufw default
 }
 
-###############################################################
-#                    BOOTLOADER INSTALLATION                  #
-###############################################################
+########################  BOOTLOADER INSTALLATION  ####################
 install_bootloader() {
   echo "▶ Installing and configuring bootloader..."
   emerge --quiet sys-boot/grub:2
@@ -1133,9 +1119,7 @@ install_bootloader() {
   grub-mkconfig -o /boot/grub/grub.cfg
 }
 
-###############################################################
-#                   FILESYSTEM CONFIGURATION                  #
-###############################################################
+########################  FILESYSTEM CONFIGURATION  ###################
 configure_filesystem() {
   echo "▶ Configuring filesystem..."
   # Set up fstab
@@ -1155,9 +1139,7 @@ FSTAB
   fi
 }
 
-###############################################################
-#                     USER ACCOUNT SETUP                      #
-###############################################################
+########################  USER ACCOUNT SETUP  #########################
 setup_user_accounts() {
   echo "▶ Setting up user accounts..."
   # Set root password
@@ -1177,9 +1159,7 @@ setup_user_accounts() {
   fi
 }
 
-###############################################################
-#                     X SERVER INSTALLATION                   #
-###############################################################
+########################  X SERVER INSTALLATION  ######################
 install_x_server() {
   if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
     echo "▶ Installing minimal X server..."
@@ -1207,9 +1187,7 @@ EOF
   fi
 }
 
-###############################################################
-#                        FINALIZATION                         #
-###############################################################
+########################  FINALIZATION  ###############################
 perform_final_steps() {
   # Common applications
   echo "▶ Installing text editor..."
@@ -1225,9 +1203,7 @@ perform_final_steps() {
   echo "🔄 You can now reboot into your new Gentoo system."
 }
 
-###############################################################
-#                      MAIN EXECUTION                         #
-###############################################################
+########################  MAIN EXECUTION  #############################
 # Execute all installation steps in sequence
 main() {
   # Portage setup
