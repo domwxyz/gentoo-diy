@@ -437,7 +437,7 @@ select_timezone() {
 configure_accounts() {
   log "Setting up system accounts..."
   
-  ask HOSTNAME "Hostname" "gentoobox"
+  ask HOSTNAME "Hostname" "gentoo"
   ask_pw ROOT_PASS "Root password"
   echo # Blank line for spacing
   ask USERNAME "Regular user name" "user"
