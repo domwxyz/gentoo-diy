@@ -1182,8 +1182,47 @@ EOF
     echo "    MatchIsKeyboard \"on\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     
-    # Basic terminal and utilities for X
-    emerge --quiet x11-terms/xterm x11-apps/xinit
+    # Basic terminal, window manager and utilities for X
+    echo "▶ Installing TWM and basic X utilities..."
+    emerge --quiet x11-terms/xterm x11-apps/xinit x11-wm/twm x11-apps/xclock x11-apps/xeyes
+    
+    # Create default .xinitrc for the user
+    echo "▶ Creating basic X session configuration..."
+    mkdir -p /etc/skel
+    cat > /etc/skel/.xinitrc <<EOF
+#!/bin/sh
+# Basic X initialization
+xrdb -merge ~/.Xresources
+xclock -geometry 50x50-1+1 &
+xterm -geometry 80x50+494+51 &
+xterm -geometry 80x20+494-0 &
+exec twm
+EOF
+    chmod +x /etc/skel/.xinitrc
+    
+    # Copy .xinitrc to existing user's home
+    if [ -d "/home/${USER_PLACEHOLDER}" ]; then
+      cp /etc/skel/.xinitrc "/home/${USER_PLACEHOLDER}/"
+      chown "${USER_PLACEHOLDER}:${USER_PLACEHOLDER}" "/home/${USER_PLACEHOLDER}/.xinitrc"
+    fi
+    
+    # Create a simple Xresources file with basic settings
+    cat > /etc/skel/.Xresources <<EOF
+! Basic X resources
+XTerm*background: black
+XTerm*foreground: lightgray
+XTerm*scrollBar: true
+XTerm*saveLines: 1000
+EOF
+    
+    # Copy .Xresources to user's home
+    if [ -d "/home/${USER_PLACEHOLDER}" ]; then
+      cp /etc/skel/.Xresources "/home/${USER_PLACEHOLDER}/"
+      chown "${USER_PLACEHOLDER}:${USER_PLACEHOLDER}" "/home/${USER_PLACEHOLDER}/.Xresources"
+    fi
+    
+    # Add a quick note about starting X
+    echo "echo 'To start the X Window System, run: startx'" >> /etc/motd
   fi
 }
 
