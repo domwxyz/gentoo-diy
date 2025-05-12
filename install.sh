@@ -1162,8 +1162,9 @@ setup_user_accounts() {
 ########################  X SERVER INSTALLATION  ######################
 install_x_server() {
   if [[ "${X_SERVER_PLACEHOLDER}" == "yes" ]]; then
-    echo "▶ Installing minimal X server..."
-    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers 
+    echo "▶ Installing XFCE desktop environment..."
+    emerge --quiet x11-base/xorg-server x11-base/xorg-drivers \
+           xfce-base/xfce4-meta x11-terms/xfce4-terminal
     
     # Configure keyboard in X11
     mkdir -p /etc/X11/xorg.conf.d
@@ -1178,118 +1179,30 @@ EOF
     [ -n "${KEYBOARD_VARIANT_PLACEHOLDER}" ] && \
       echo "    Option \"XkbVariant\" \"${KEYBOARD_VARIANT_PLACEHOLDER}\"" >> /etc/X11/xorg.conf.d/00-keyboard.conf
     echo "EndSection" >> /etc/X11/xorg.conf.d/00-keyboard.conf
-    
-    # Install minimal but complete desktop environment
-    echo "▶ Installing TWM, tint2, feh and basic X utilities..."
-    emerge --quiet x11-terms/xterm x11-apps/xinit x11-wm/twm \
-           x11-misc/tint2 media-gfx/feh
-    
-    # Create system-wide directories
-    mkdir -p /etc/X11/twm
-    mkdir -p /usr/share/backgrounds
-    
-    # Create a simple purple-black wallpaper with feh
-    echo "▶ Creating default background..."
-    mkdir -p /usr/share/backgrounds
-    convert -size 1920x1080 gradient:purple-black /usr/share/backgrounds/default.png 2>/dev/null || \
-      echo "solid:#200020" > /usr/share/backgrounds/default.png
-    
-    # Create a minimal tint2 panel config
-    mkdir -p /etc/X11/tint2
-    cat > /etc/X11/tint2/tint2rc <<EOF
-# Minimal tint2 config for Gentoo dot DIY
-panel_position = bottom center horizontal
-panel_size = 100% 24
-panel_items = TSC
-
-# Panel appearance
-panel_background_id = 1
-background_color = #000000 80
-border_width = 0
-
-# Taskbar
-taskbar_mode = single_desktop
-taskbar_padding = 3 3 3
-task_icon = 1
-task_text = 1
-task_maximum_size = 180 32
-
-# System tray
-systray = 1
-systray_padding = 4 2 3
-systray_icon_size = 16
-
-# Clock
-time1_format = %H:%M
-time1_font = sans 8
-clock_font_color = #FFFFFF 74
-EOF
-
-    # Create a minimal TWM config
-    cat > /etc/X11/twm/system.twmrc <<EOF
-# Minimal TWM config for Gentoo dot DIY
-NoGrabServer
-DecorateTransients
-TitleFont "-*-sans-medium-r-*-*-10-*-*-*-*-*-*-*"
-ResizeFont "-*-sans-medium-r-*-*-10-*-*-*-*-*-*-*"
-MenuFont "-*-sans-medium-r-*-*-10-*-*-*-*-*-*-*"
-IconFont "-*-sans-medium-r-*-*-10-*-*-*-*-*-*-*"
-BorderWidth 1
-NoHighlight
-
-# Window behavior
-Function "move-or-raise" { f.move f.deltastop f.raise }
-Button1 = : root : f.menu "main"
-Button1 = m : window|icon : f.function "move-or-raise"
-Button2 = m : window|icon : f.iconify
-Button3 = m : window|icon : f.resize
-
-# Menu
-Menu "main"
-{
-    "TWM Menu"          f.title
-    "Terminal"          f.exec "exec xterm &"
-    "Restart TWM"       f.restart
-    "Exit X"            f.quit
-}
-EOF
-
-    # Create a minimal .xinitrc
+    # Create simple xinitrc
     cat > /etc/skel/.xinitrc <<EOF
 #!/bin/sh
-# Set background
-feh --bg-fill /usr/share/backgrounds/default.png &
-
-# Start panel
-tint2 -c /etc/X11/tint2/tint2rc &
-
-# Start a terminal
-xterm &
-
-# Start window manager
-exec twm -f /etc/X11/twm/system.twmrc
+# Start XFCE
+exec dbus-launch --exit-with-session xfce4-session
 EOF
     chmod +x /etc/skel/.xinitrc
-    
-    # Create minimal .Xresources
+    # Create basic Xresources for better terminal appearance
     cat > /etc/skel/.Xresources <<EOF
-! Basic XTerm config
-XTerm*background: black
-XTerm*foreground: lightgray
+XTerm*faceName: DejaVu Sans Mono
+XTerm*faceSize: 10
+XTerm*termName: xterm-256color
 XTerm*scrollBar: true
 XTerm*saveLines: 1000
 EOF
-
     # Copy configs to user home if it exists
     if [ -d "/home/${USER_PLACEHOLDER}" ]; then
       cp /etc/skel/.xinitrc /etc/skel/.Xresources "/home/${USER_PLACEHOLDER}/"
       chown "${USER_PLACEHOLDER}:${USER_PLACEHOLDER}" "/home/${USER_PLACEHOLDER}/".{xinitrc,Xresources}
     fi
-    
     # Add note about X to login message
-    echo -e "\nX Window System installed. Start with: startx\n" >> /etc/motd
+    echo -e "\nXFCE installed. Start with: startx\n" >> /etc/motd
     
-    echo "▶ Minimal X environment configured with TWM and tint2"
+    echo "▶ XFCE desktop environment configured"
   fi
 }
 
