@@ -165,7 +165,7 @@ check_requirements() {
   section "System requirements"
   
   log "Verifying required tools..."
-  for bin in curl wget sgdisk lsblk lspci lscpu awk openssl gpg; do 
+  for bin in curl wget sgdisk lsblk lspci lscpu awk openssl gpg bc; do 
     need "$bin"
   done
   
@@ -472,6 +472,12 @@ configure_system() {
   echo "2) btrfs - Advanced filesystem with snapshots and other features"
   ask FS "Root filesystem (1-2)" "1"
   [[ $FS == 1 ]] && FSTYPE="ext4" || FSTYPE="btrfs"
+
+  echo -e "\n${cyn}Partition Layout${nc}"
+  ask SEPARATE_HOME "Create separate /home partition? (y/n)" "n"
+  if [[ $SEPARATE_HOME == [Yy]* ]]; then
+    ask HOME_SIZE "Size for /home partition in GiB" "20"
+  fi
 }
 
 configuration_wizard() {
@@ -497,6 +503,7 @@ display_config_summary() {
   echo -e "${blu}Kernel method:${nc}    ${ylw}$(case $KMETHOD in 1) echo "genkernel";; 2) echo "manual";; *) echo "automated";; esac)${nc}"
   echo -e "${blu}Swap Size:${nc}        ${ylw}${SWAPSIZE}GB${nc}"
   echo -e "${blu}Root Filesystem:${nc}  ${ylw}$FSTYPE${nc}"
+  echo -e "${blu}Separate /home:${nc}   ${ylw}$([[ $SEPARATE_HOME == [Yy]* ]] && echo "Yes (${HOME_SIZE}GB)" || echo "No")${nc}"
   echo -e "${blu}CPU:${nc}              ${ylw}$CPU_TYPE${nc}"
   echo -e "${blu}GPU:${nc}              ${ylw}$GPU_TYPE${nc}"
   echo -e "${blu}Firmware:${nc}         ${ylw}$([[ $UEFI == "yes" ]] && echo "UEFI" || echo "BIOS")${nc}"
@@ -590,11 +597,22 @@ partition_disk() {
     sgdisk --zap-all "$DISK"
     sgdisk -n1:0:+512M -t1:ef00 -c1:"EFI System" "$DISK"
     sgdisk -n2:0:+${SWAPSIZE}G -t2:8200 -c2:"swap" "$DISK"
-    sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      sgdisk -n3:0:+${HOME_SIZE}G -t3:8300 -c3:"home" "$DISK"
+      sgdisk -n4:0:0        -t4:8300 -c4:"rootfs" "$DISK"
+    else
+      sgdisk -n3:0:0        -t3:8300 -c3:"rootfs" "$DISK"
+    fi
   else
     parted -s "$DISK" mklabel msdos
     parted -s "$DISK" mkpart primary linux-swap 1MiB "${SWAPSIZE}GiB"
-    parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      local home_end=$(echo "${SWAPSIZE} + ${HOME_SIZE}" | bc)
+      parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" "${home_end}GiB"
+      parted -s "$DISK" mkpart primary ext4 "${home_end}GiB" 100%
+    else
+      parted -s "$DISK" mkpart primary ext4 "${SWAPSIZE}GiB" 100%
+    fi
   fi
 
   log "Ensuring partitions are recognized..."
@@ -603,44 +621,82 @@ partition_disk() {
 
   # Double-check the partitions exist
   if [[ $UEFI == yes ]]; then
-    if [[ ! -e "${DISK}${P}3" ]]; then
-      log "Waiting for partitions to become available..."
-      for i in {1..10}; do
-        sleep 1
-        [[ -e "${DISK}${P}3" ]] && break
-        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
-      done
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      if [[ ! -e "${DISK}${P}4" ]]; then
+        log "Waiting for partitions to become available..."
+        for i in {1..10}; do
+          sleep 1
+          [[ -e "${DISK}${P}4" ]] && break
+          [[ $i -eq 10 ]] && die "Partition ${DISK}${P}4 not found after 10 seconds. Aborting."
+        done
+      fi
+    else
+      if [[ ! -e "${DISK}${P}3" ]]; then
+        log "Waiting for partitions to become available..."
+        for i in {1..10}; do
+          sleep 1
+          [[ -e "${DISK}${P}3" ]] && break
+          [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
+        done
+      fi
     fi
   else
-    if [[ ! -e "${DISK}${P}2" ]]; then
-      log "Waiting for partitions to become available..."
-      for i in {1..10}; do
-        sleep 1
-        [[ -e "${DISK}${P}2" ]] && break
-        [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
-      done
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      if [[ ! -e "${DISK}${P}3" ]]; then
+        log "Waiting for partitions to become available..."
+        for i in {1..10}; do
+          sleep 1
+          [[ -e "${DISK}${P}3" ]] && break
+          [[ $i -eq 10 ]] && die "Partition ${DISK}${P}3 not found after 10 seconds. Aborting."
+        done
+      fi
+    else
+      if [[ ! -e "${DISK}${P}2" ]]; then
+        log "Waiting for partitions to become available..."
+        for i in {1..10}; do
+          sleep 1
+          [[ -e "${DISK}${P}2" ]] && break
+          [[ $i -eq 10 ]] && die "Partition ${DISK}${P}2 not found after 10 seconds. Aborting."
+        done
+      fi
     fi
   fi
 
   ESP="${DISK}${P}1"
   SWP="${DISK}${P}2"
-  ROOT="${DISK}${P}3"
-
-  # For MBR partitioning where partitions start at 1 instead of 0
-  if [[ $UEFI != yes ]]; then
+  if [[ $UEFI == yes ]]; then
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      HOME="${DISK}${P}3"
+      ROOT="${DISK}${P}4"
+    else
+      ROOT="${DISK}${P}3"
+    fi
+  else
+    # For MBR partitioning where partitions start at 1 instead of 0
     SWP="${DISK}${P}1"
-    ROOT="${DISK}${P}2"
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      HOME="${DISK}${P}2"
+      ROOT="${DISK}${P}3"
+    else
+      ROOT="${DISK}${P}2"
+    fi
   fi
 
   log "Disk partitioning complete:"
   [[ $UEFI == yes ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ESP" "(FAT32)" "/boot (EFI System Partition)"
   printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$SWP" "(swap)"   "[SWAP]"
+  [[ $SEPARATE_HOME == [Yy]* ]] && printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$HOME" "($FSTYPE)" "/home"
   printf "  ${ylw}%-15s${nc} %-10s %s\\n" "$ROOT" "($FSTYPE)" "/ (Root Filesystem)"
   echo # Blank line for separation
 
   if [[ ! -d /sys/firmware/efi ]] && [[ $(lsblk -no PTTYPE "$DISK") == dos ]]; then
-    log "Marking root partition (index 2 on $DISK) as active"
-    parted -s "$DISK" set 2 boot on
+    if [[ $SEPARATE_HOME == [Yy]* ]]; then
+      log "Marking root partition (index 3 on $DISK) as active"
+      parted -s "$DISK" set 3 boot on
+    else
+      log "Marking root partition (index 2 on $DISK) as active"
+      parted -s "$DISK" set 2 boot on
+    fi
   fi
 
   # Format partitions
@@ -649,8 +705,14 @@ partition_disk() {
 
   mkswap "$SWP"
   case $FSTYPE in
-    ext4)  mkfs.ext4  -L gentoo "$ROOT" ;;
-    btrfs) mkfs.btrfs -L gentoo "$ROOT" ;;
+    ext4)  
+      mkfs.ext4  -L gentoo "$ROOT"
+      [[ $SEPARATE_HOME == [Yy]* ]] && mkfs.ext4 -L home "$HOME"
+      ;;
+    btrfs) 
+      mkfs.btrfs -L gentoo "$ROOT"
+      [[ $SEPARATE_HOME == [Yy]* ]] && mkfs.btrfs -L home "$HOME"
+      ;;
   esac
 
   if [[ $UEFI == yes ]]; then
@@ -659,6 +721,7 @@ partition_disk() {
     ESP_UUID=""  # Empty for non-UEFI systems
   fi
   SWP_UUID="$(blkid -s UUID -o value "$SWP")"
+  [[ $SEPARATE_HOME == [Yy]* ]] && HOME_UUID="$(blkid -s UUID -o value "$HOME")"
   
   log "Mounting filesystems..."
   mkdir -p /mnt/gentoo
@@ -667,6 +730,12 @@ partition_disk() {
 
   mkdir -p /mnt/gentoo/boot
   [[ $UEFI == yes ]] && mount "$ESP" /mnt/gentoo/boot
+  
+  if [[ $SEPARATE_HOME == [Yy]* ]]; then
+    mkdir -p /mnt/gentoo/home
+    mount "$HOME" /mnt/gentoo/home
+  fi
+  
   swapon "$SWP"
 }
 
@@ -805,6 +874,8 @@ GRUBTARGET_PLACEHOLDER="@@GRUBTGT@@"
 FSTYPE_PLACEHOLDER="@@FSTYPE@@"
 ESP_UUID_PLACEHOLDER="@@ESP_UUID@@"
 SWP_UUID_PLACEHOLDER="@@SWP_UUID@@"
+SEPARATE_HOME_PLACEHOLDER="@@SEPARATE_HOME@@"
+HOME_UUID_PLACEHOLDER="@@HOME_UUID@@"
 MAKEOPTS_PLACEHOLDER="@@MAKEOPTS@@"
 # -----------------------------------------------------
 
@@ -1130,12 +1201,18 @@ LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}   
 PARTUUID=${ESP_UUID_PLACEHOLDER}        /boot           vfat      defaults                0 2
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
+    if [[ "${SEPARATE_HOME_PLACEHOLDER}" == [Yy]* ]]; then
+      echo "UUID=${HOME_UUID_PLACEHOLDER}            /home           ${FSTYPE_PLACEHOLDER}    noatime         0 2" >> /etc/fstab
+    fi
   else
     cat > /etc/fstab <<FSTAB
 # <fs>                                  <mountpoint>    <type>    <opts>                  <dump/pass>
 LABEL=gentoo                            /               ${FSTYPE_PLACEHOLDER}    noatime         0 1
 UUID=${SWP_UUID_PLACEHOLDER}            none            swap      sw                      0 0
 FSTAB
+    if [[ "${SEPARATE_HOME_PLACEHOLDER}" == [Yy]* ]]; then
+      echo "UUID=${HOME_UUID_PLACEHOLDER}            /home           ${FSTYPE_PLACEHOLDER}    noatime         0 2" >> /etc/fstab
+    fi
   fi
 }
 
@@ -1292,6 +1369,8 @@ execute_chroot() {
   safe_replace "@@ESP_UUID@@" "$ESP_UUID" "$chroot_script"
   safe_replace "@@SWP_UUID@@" "$SWP_UUID" "$chroot_script"
   safe_replace "@@DISKVAL@@" "$DISK" "$chroot_script"
+  safe_replace "@@SEPARATE_HOME@@" "$SEPARATE_HOME" "$chroot_script"
+  [[ $SEPARATE_HOME == [Yy]* ]] && safe_replace "@@HOME_UUID@@" "$HOME_UUID" "$chroot_script" || safe_replace "@@HOME_UUID@@" "" "$chroot_script"
   
   # Installation options
   local kval
